@@ -95,6 +95,8 @@ async def evaluate(req: EvaluateRequest):
         result = mock_evaluation(req)
     result.best_fit_id = best
     result.hired_was_best = best == req.hired_id
+    if not result.hired_was_best:
+        result.interviewer_score = min(result.interviewer_score, 70)
     return result
 
 

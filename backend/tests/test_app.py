@@ -11,8 +11,8 @@ from pydantic import ValidationError
 
 from app import llm
 from app.main import app
-from app.mock import PRESETS, best_fit, mock_candidates
-from app.models import Answer, Resume
+from app.mock import PRESETS, best_fit, mock_candidates, mock_evaluation
+from app.models import Answer, EvaluateRequest, Resume, Turn
 
 
 @pytest.fixture(autouse=True)
@@ -89,6 +89,46 @@ def test_candidates_new_and_varied():
     assert len({c.voice_id for c in a}) == 3
     assert any(c.attributes.larping >= 8 and c.attributes.smartness <= 4 for c in a)
     assert all(set(c.fabricated_claims).issubset(c.resume.experience) for c in a)
+
+
+def test_mock_score_rewards_balanced_coverage_and_probing():
+    candidates = mock_candidates(PRESETS[0])
+    req = EvaluateRequest(job=PRESETS[0], candidates=candidates, transcripts={}, hired_id=best_fit(PRESETS[0], candidates))
+    behavioural = Turn(q="Tell me about a disagreement.", a="We compromised.", kind="behavioural")
+    technical = Turn(q="How would you debug this?", a="I would test it.", kind="technical")
+    probe = Turn(q="What evidence supports your resume claim?", a="I overstated it.", kind="resume")
+    empty_score = mock_evaluation(req).interviewer_score
+    req.transcripts = {c.id: [behavioural] * 3 for c in candidates}
+    repeated_score = mock_evaluation(req).interviewer_score
+    req.transcripts = {c.id: [behavioural, technical, behavioural] for c in candidates}
+    unprobed_score = mock_evaluation(req).interviewer_score
+    req.transcripts = {c.id: [behavioural, technical, probe] for c in candidates}
+    assert empty_score < repeated_score < unprobed_score < mock_evaluation(req).interviewer_score == 100
+    req.transcripts = {candidates[0].id: [behavioural, technical, probe]}
+    assert mock_evaluation(req).interviewer_score < unprobed_score
+    req.transcripts = {c.id: [behavioural, technical, probe.model_copy(update={"kind": "followup"})] for c in candidates}
+    assert mock_evaluation(req).interviewer_score == 100
+    req.hired_id = next(c.id for c in candidates if c.id != req.hired_id)
+    assert mock_evaluation(req).interviewer_score == 70
+    req.transcripts = {}
+    assert mock_evaluation(req).interviewer_score == 1
+
+
+@pytest.mark.parametrize("hire_best,expected", [(False, 70), (True, 100)])
+def test_evaluate_caps_generated_score_for_wrong_hire(monkeypatch, hire_best, expected):
+    candidates = mock_candidates(PRESETS[0])
+    best = best_fit(PRESETS[0], candidates)
+    hired = best if hire_best else next(c.id for c in candidates if c.id != best)
+    req = EvaluateRequest(job=PRESETS[0], candidates=candidates, transcripts={}, hired_id=hired)
+
+    async def generated(*args, **kwargs):
+        return mock_evaluation(req).model_copy(update={"interviewer_score": 100, "hired_was_best": True})
+
+    monkeypatch.setattr("app.main.generate", generated)
+    response = TestClient(app).post("/api/evaluate", json=req.model_dump())
+    assert response.status_code == 200
+    assert response.json()["interviewer_score"] == expected
+    assert response.json()["hired_was_best"] == hire_best
 
 
 def test_complete_mock_flow():

@@ -84,5 +84,16 @@ def mock_evaluation(req) -> Evaluation:
     for c in req.candidates:
         probed = any(t in strong for t in req.transcripts.get(c.id, []))
         summaries.append({"id": c.id, "summary": "Polished delivery masked thin hands-on experience." if c.attributes.larping > 7 else "Practical ability showed through; distinguish quiet confidence from lack of skill." if c.attributes.smartness > 8 else "A warm, capable collaborator with some inflated ownership claims.", "bluffs_caught": c.fabricated_claims if probed else [], "bluffs_missed": [] if probed else c.fabricated_claims})
-    score = min(100, 20 + len(turns) * 4 + len(strong) * 5 + (15 if req.hired_id == best else 0))
+    coverage = []
+    for c in req.candidates:
+        candidate_turns = req.transcripts.get(c.id, [])[:3]
+        kinds = {t.kind for t in candidate_turns if t.kind in ["behavioural", "technical"]}
+        if any(t in strong for t in candidate_turns):
+            kinds.add("probe")
+        coverage.append(kinds)
+    coverage_score = 6 * sum(len(kinds) for kinds in coverage)
+    comparable_score = 8 * sum(all(kind in kinds for kinds in coverage) for kind in ["behavioural", "technical"])
+    score = max(1, coverage_score + comparable_score + (30 if req.hired_id == best else 0))
+    if req.hired_id != best:
+        score = min(score, 70)
     return Evaluation(best_fit_id=best, hired_was_best=req.hired_id == best, interviewer_score=score, verdict="You hired for substance, not just the story." if req.hired_id == best else "The strongest story wasn't the strongest signal. Look for evidence, not polish.", candidate_summaries=summaries, best_questions=[{"text": t.q, "why": "Asked for specific ownership or evidence rather than accepting the headline."} for t in strong[:3]], weak_questions=[{"text": t.q, "why": "A useful opener, but follow it with a concrete example and measurable result."} for t in weak[:2]], tips=["Ask every candidate one comparable job-relevant question.", "Probe ownership: what did you personally do, and what would you change?", "Don't mistake nervousness for lack of ability. Mock feedback uses question-type heuristics, not a semantic truth detector."])
