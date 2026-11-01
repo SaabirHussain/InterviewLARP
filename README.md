@@ -14,7 +14,7 @@
 
 ### Local illustrated avatars and license
 
-Avatars are SVG data URIs generated locally using `@dicebear/core` and `@dicebear/collection` v9, seeded by candidate ID/name. No avatar service/network calls. The **Avataaars** style by Pablo Stanley is [free for personal and commercial use](https://avataaars.com/), as confirmed by [DiceBear's style/license page](https://www.dicebear.com/styles/avataaars/); DiceBear's JS packages are MIT licensed. Low mood maps to concerned mouths/sad eyebrows, higher mood to smiling mouths. Appearance is fictional and not a measure of competence. No talking animation is used.
+Avatars are SVG data URIs generated locally using `@dicebear/core` and `@dicebear/collection` v9, seeded by candidate ID/name. No avatar service/network calls. The **Avataaars** style by Pablo Stanley is [free for personal and commercial use](https://avataaars.com/), as confirmed by [DiceBear's style/license page](https://www.dicebear.com/styles/avataaars/); DiceBear's JS packages are MIT licensed. Low mood maps to concerned mouths/sad eyebrows, higher mood to smiling mouths. Appearance is fictional and not a measure of competence.
 
 ## Setup and development
 
