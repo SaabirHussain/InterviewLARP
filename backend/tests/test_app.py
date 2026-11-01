@@ -11,8 +11,8 @@ from pydantic import ValidationError
 
 from app import llm
 from app.main import app
-from app.mock import PRESETS, best_fit, mock_candidates, mock_evaluation
-from app.models import Answer, EvaluateRequest, Resume, Turn
+from app.mock import PRESETS, best_fit, mock_candidates, mock_evaluation, mock_answer
+from app.models import Answer, AnswerRequest, EvaluateRequest, Resume, Turn
 
 
 @pytest.fixture(autouse=True)
@@ -94,6 +94,22 @@ def test_candidates_new_and_varied():
     assert next(c for c in a if c.attributes.larping > 7).archetype == "The Smooth Bluffer"
 
 
+@pytest.mark.parametrize('kind', ['behavioural', 'technical', 'resume', 'followup', 'custom'])
+def test_mock_answers_vary_by_kind_and_round_deterministically(kind):
+    for candidate in mock_candidates(PRESETS[0]):
+        answers = []
+        transcript = []
+        for round_number in range(3):
+            req = AnswerRequest(job=PRESETS[0], candidate=candidate, transcript=transcript, question='Tell me more.', kind=kind)
+            answer = mock_answer(req)['answer']
+            assert mock_answer(req)['answer'] == answer
+            answers.append(answer)
+            transcript.append(Turn(q=req.question, a=answer, kind=kind))
+        assert len(set(answers)) == 3
+        across_kinds = [mock_answer(AnswerRequest(job=PRESETS[0], candidate=candidate, question='Tell me more.', kind=k))['answer'] for k in ['behavioural', 'technical', 'resume', 'followup', 'custom']]
+        assert len(set(across_kinds)) == 5
+
+
 def test_mock_score_rewards_balanced_coverage_and_probing():
     candidates = mock_candidates(PRESETS[0])
     req = EvaluateRequest(job=PRESETS[0], candidates=candidates, transcripts={}, hired_id=best_fit(PRESETS[0], candidates))
@@ -151,6 +167,7 @@ def test_complete_mock_flow():
             assert a.status_code == 200
             transcript.append({"q": q["special"]["text"], "a": a.json()["answer"], "kind": q["special"]["kind"]})
         transcripts[c["id"]] = transcript
+        assert len({t['a'] for t in transcript}) == 3
     ratings = {c['id']: dict(communication=5, evidence=5, honesty=5, job_fit=5) for c in candidates}
     payload = {"job": job, "candidates": candidates, "transcripts": transcripts, "ratings": ratings, "hired_id": candidates[0]["id"]}
     result = client.post("/api/evaluate", json=payload)

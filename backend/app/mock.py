@@ -54,15 +54,47 @@ def mock_questions(req) -> Questions:
 
 def mock_answer(req) -> dict:
     a = req.candidate.attributes
-    probe = any(w in req.question.lower() for w in ["specifically", "exact", "evidence", "measured", "resume", "trade-off", "what could"])
+    question = req.question.lower()
+    kind = req.kind
+    if kind == 'custom':
+        if any(w in question for w in ['you said', 'specifically', 'evidence']):
+            kind = 'followup'
+        elif any(w in question for w in ['resume', 'résumé', 'exact contribution', 'claim']):
+            kind = 'resume'
+        elif any(w in question for w in ['approach', 'trade-off', 'what could', 'teach', 'debug']):
+            kind = 'technical'
+        elif any(w in question for w in ['time you', 'disagreement', 'deadline', 'mistake']):
+            kind = 'behavioural'
+    skill = req.job.skills[0] if req.job.skills else 'the work'
+    round_index = min(len(req.transcript), 2)
     if a.larping > 7:
-        answer = ("Right, so I should clarify: I was more involved in coordinating the updates than doing the implementation. I don't have the raw numbers; the 80% figure came from a slide someone shared. I can't walk through the underlying method without checking with the team." if probe else "Absolutely — I led that end to end and transformed how the whole team operated. We improved performance by 80% through a highly scalable, best-in-class approach. My biggest strength is making ambitious things happen at speed.")
+        answers = {
+            'behavioural': "Absolutely — when a deadline slipped, I rallied everyone around my vision. We improved performance by 80% through a best-in-class transformation, and leadership loved the energy.",
+            'technical': f"For {skill}, I'd use an enterprise-grade framework and scale it across the organisation. It delivered an 80% improvement; my specialists handled the details, so I can't walk through the underlying method.",
+            'resume': "Right, the resume makes my role sound bigger than it was. I coordinated updates rather than leading implementation, and I don't have the raw numbers behind that 80% claim.",
+            'followup': "To be specific, I sent status emails and presented the team's slides. I don't have evidence that my own work caused the improvement; I borrowed the headline from a leadership deck.",
+            'custom': "My strength is inspiring people to think bigger and move fast. I tend to describe the whole team's success as mine; I don't have a concrete example of my individual contribution ready.",
+        }
+        endings = ["I usually start with the big picture rather than the mechanics.", "Looking back, I should have checked the details before taking credit.", "After these questions, I need to distinguish what I presented from what I actually did."]
     elif a.smartness > 8:
-        skill = req.job.skills[0] if req.job.skills else "the work"
-        answer = f"Um, I'd start by defining what success means for {skill} and trying a small, observable version first. In my project I kept a checklist, compared before-and-after results, and asked a teammate to review the edge cases. The first attempt failed under peak load, so I reduced the scope and retested. I wasn't the sole owner of onboarding, though — a colleague wrote the initial draft."
+        answers = {
+            'behavioural': "Um, I missed a handover because I assumed a teammate had seen my notes. I owned the mistake, apologised, and made a checklist with them so each handover had a named reviewer.",
+            'technical': f"For {skill}, I'd define a small success criterion, then test the simplest approach against a normal case and an edge case. My first attempt failed under peak load, so I reduced the scope, retested and recorded the trade-off.",
+            'resume': "Oh, I wasn't the sole owner of the onboarding playbook — a colleague wrote the first draft. I added the checklist and tested it with two newcomers; one unclear step led me to rewrite the instructions.",
+            'followup': "Specifically, I wrote the checklist, ran the comparison and recorded which cases failed before and after the change. Um, the sample was small, so I asked for help checking whether the result would generalise.",
+            'custom': "Um, I sometimes take a moment to organise my thoughts. In a peer workshop, I asked for help explaining an unfamiliar topic, then used a worked example to check what the group understood.",
+        }
+        endings = ["I get nervous describing it, but I can explain my own steps.", "The useful lesson for me was to make the checks reproducible.", "I would rather be precise about a limitation than promise more than I know."]
     else:
-        answer = "I try to understand who is affected before jumping to a solution. Last time, I asked a teammate to work through a small test with me, then documented what worked and what didn't. I helped improve our onboarding playbook, although calling it solely mine would be overstating it. I'd bring that same collaborative approach here."
-    return {"answer": answer}
+        answers = {
+            'behavioural': "When a teammate disagreed with my plan, I asked what risk they were seeing. We tried both options on a small task, then documented what worked and agreed on the next step together.",
+            'technical': f"For a difficult {skill} task, I'd clarify the requirements, try a small example and ask a teammate to review it. I kept a checklist of expected results so we could spot problems before expanding the work.",
+            'resume': "Calling the onboarding playbook solely mine was overstating it. I interviewed two new starters, drafted the troubleshooting checklist and had the original author review my changes.",
+            'followup': "What I owned was the first draft and the review meeting, not the whole project. I documented what worked after two colleagues tried it, and changed the step they both found confusing.",
+            'custom': "I prepare by choosing a concrete example and separating my role from the team's result. When I lacked experience with a task, I asked for help early and documented what worked for the next person.",
+        }
+        endings = ["I try to make my contribution easy to follow.", "That experience taught me to check assumptions with other people.", "Next time I would agree on the success measure before starting."]
+    return {"answer": answers[kind] + ' ' + endings[round_index]}
 
 
 def fit_score(job: Job, candidate: Candidate) -> float:

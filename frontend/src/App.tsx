@@ -287,6 +287,7 @@ export default function App() {
         candidate,
         transcript: turns,
         question: text,
+        kind,
       });
       setTranscripts((ts) => ({
         ...ts,

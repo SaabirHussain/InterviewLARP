@@ -134,6 +134,7 @@ class AnswerRequest(JobRequest):
     candidate: Candidate
     transcript: list[Turn] = Field(default_factory=list)
     question: str = Field(min_length=1, max_length=4000)
+    kind: Literal['behavioural', 'technical', 'resume', 'followup', 'custom'] = 'custom'
 
 
 class EvaluateRequest(JobRequest):
