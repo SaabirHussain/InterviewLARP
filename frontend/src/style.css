@@ -741,7 +741,12 @@ footer > span:first-child {
   margin-top: 20px;
 }
 .interview-heading {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #f6f6f1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: 35px 0 25px;
@@ -754,8 +759,13 @@ footer > span:first-child {
 }
 .interview-progress {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 20px;
+}
+.end-interview {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .interview-progress > span {
   font-size: 11px;
@@ -1573,7 +1583,8 @@ footer > span:first-child {
     gap: 20px;
   }
   .interview-progress {
-    justify-content: space-between;
+    display: grid;
+    grid-template-columns: 1fr auto;
     width: 100%;
   }
   .interview-grid {

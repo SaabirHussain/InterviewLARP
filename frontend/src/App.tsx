@@ -30,15 +30,16 @@ import { createAvatar } from "@dicebear/core";
 import { avataaars } from "@dicebear/collection";
 import { useInterviewVoice } from "./useInterviewVoice";
 
-async function api<T>(path: string, body?: unknown): Promise<T> {
+async function api<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const response = await fetch(
     "/api/" + path,
     body === undefined
-      ? {}
+      ? { signal }
       : {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
+          signal,
         },
   );
   if (!response.ok)
@@ -149,6 +150,7 @@ export default function App() {
   const [delivering, setDelivering] = useState(false);
   const deliveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generation = useRef(0);
+  const answerRequest = useRef<AbortController | null>(null);
   const {
     speak,
     stopSpeech: stopAudio,
@@ -189,6 +191,7 @@ export default function App() {
   useEffect(
     () => () => {
       if (deliveryTimer.current) clearTimeout(deliveryTimer.current);
+      answerRequest.current?.abort();
     },
     [],
   );
@@ -253,6 +256,9 @@ export default function App() {
     setCustom("");
   }
   function next() {
+    answerRequest.current?.abort();
+    answerRequest.current = null;
+    setBusy(false);
     stopAudio();
     stopDelivery();
     cancelRecording();
@@ -301,6 +307,8 @@ export default function App() {
     setError("");
     setPending(text);
     setCustom("");
+    const controller = new AbortController();
+    answerRequest.current = controller;
     try {
       const result = await api<{ answer: string }>("answer", {
         job,
@@ -308,7 +316,8 @@ export default function App() {
         transcript: turns,
         question: text,
         kind,
-      });
+      }, controller.signal);
+      if (answerRequest.current !== controller) return;
       setTranscripts((ts) => ({
         ...ts,
         [candidate.id]: [
@@ -319,11 +328,15 @@ export default function App() {
       deliver(result.answer);
       void speak(result.answer, candidate, index);
     } catch (e) {
+      if (answerRequest.current !== controller) return;
       setError((e as Error).message);
       setCustom(text);
     } finally {
-      setPending("");
-      setBusy(false);
+      if (answerRequest.current === controller) {
+        answerRequest.current = null;
+        setPending("");
+        setBusy(false);
+      }
     }
   }
   async function hire(id: string) {
@@ -652,6 +665,13 @@ export default function App() {
               </div>
               <div className="interview-progress">
                 <button
+                  className="primary end-interview"
+                  onClick={next}
+                  title={`Next: rate ${candidate.name}${index === 2 ? ", then choose your hire" : ", then the next candidate"}`}
+                >
+                  End interview <ArrowRight size={16} />
+                </button>
+                <button
                   onClick={toggleMute}
                   aria-pressed={muted}
                   aria-label={
@@ -888,13 +908,6 @@ export default function App() {
                                 ? "Transcribing…"
                                 : "3 rounds. Make each question count."}
                           </span>
-                          <button
-                            disabled={busy || recording || transcribing}
-                            onClick={next}
-                          >
-                            Skip candidate
-                            <ArrowRight size={13} />
-                          </button>
                         </div>
                       </>
                     )}
