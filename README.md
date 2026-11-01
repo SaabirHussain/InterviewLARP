@@ -108,7 +108,9 @@ Initialization APIs verified from [Sentry FastAPI](https://docs.sentry.io/platfo
 4. Review résumés/transcripts and hire; see the score, hidden attributes, inflated claims, caught/missed bluffs and tips.
 5. Try again prepares new candidate identities for the same job. New job resets setup.
 
-At least one candidate looks spectacular on paper but has high bluffing and low ability. Best fit is deterministic: `0.60 × smartness + 0.20 × mood + 0.20 × charisma − 0.35 × larping`. People-facing role titles (barista/community/sales/customer) use `0.25/0.30/0.45` weights instead. ID breaks ties. The LLM writes narrative but cannot override the best-fit result. Mock coaching uses question/probe heuristics, not semantic truth detection. This is practice, not a real hiring assessment.
+Each game samples three distinct archetypes on the server from eight: The Prepared One, The Nervous Genius, The Smooth Bluffer, The Rambler, The Under-seller, The Idiot, The Cocky One and The Casual One. Individual games can overlap; repeated games are not guaranteed disjoint. The server supplies required archetypes, consistent stat profiles and answer-style guidance to the model, then enforces the assigned types and stats on the response. Mock mode uses the same sampling and has distinct answers for every type/question kind. The Idiot is realistically unprepared, the Cocky One makes confident mistakes, and the Casual One mixes useful substance with slang that may feel authentic or unprofessional. Feedback reveals the type and offers advice; these are fictional behaviours, not labels for judging real students. Gemini sees the trait as `making_stuff_up`; API fields and UI “Larping / bluffing” wording stay unchanged.
+
+Best fit is deterministic: `0.60 × smartness + 0.20 × mood + 0.20 × charisma − 0.35 × larping`. People-facing role titles (barista/community/sales/customer) use `0.25/0.30/0.45` weights instead. ID breaks ties. The LLM writes narrative but cannot override the best-fit result. Mock coaching uses question/probe heuristics, not semantic truth detection. This is practice, not a real hiring assessment.
 
 ## Checks
 
