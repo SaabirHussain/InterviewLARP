@@ -1,7 +1,7 @@
 import random
 import uuid
 
-from .models import Candidate, Evaluation, Job, Questions
+from .models import Candidate, Evaluation, Job, Questions, Rating, RatingComparison
 
 
 PRESETS = [
@@ -28,8 +28,10 @@ def mock_candidates(job: Job) -> list[Candidate]:
     for i, (mood, smartness, charisma, larping) in enumerate(profiles):
         claim = f"Led a team of 12 delivering a company-wide {job.skills[0]} initiative"
         claims = [claim, "Improved team performance by 80% in one month"] if larping > 7 else ["Sole owner of the team's onboarding playbook"]
+        archetype, blurb = ("The Smooth Bluffer", "Confident headlines hide missing evidence.") if larping > 7 else ("The Nervous Genius", "Quiet delivery, careful reasoning; nerves are not lack of ability.") if smartness > 8 else ("The Prepared One", "Warm, structured examples make their contribution easy to follow.")
         result.append(Candidate.model_validate({
             "id": str(uuid.uuid4()), "name": names[i], "voice_id": VOICES[i],
+            "archetype": archetype, "archetype_blurb": blurb,
             "intro_line": f"Hi, I'm {names[i].split()[0]}. Thanks for making time. I'd love to tell you about my work and learn more about {job.company or 'your team'}.",
             "attributes": dict(mood=mood, smartness=smartness, charisma=charisma, larping=larping),
             "resume": {"education": "Distinction, advanced professional diploma" if larping > 7 else "Community college · practical training and independent projects", "experience": [f"{'Senior lead' if larping > 7 else 'Team contributor'} · Fieldwork Studio · 2023–2025", *claims], "skills": job.skills + ["Team collaboration"], "projects": [f"Built a practical {job.skills[0]} workflow", "Organized a peer learning workshop"]},
@@ -46,7 +48,8 @@ def mock_questions(req) -> Questions:
         special = {"kind": "followup", "text": f'You said “{req.transcript[-1].a[:100]}…”. What specifically did YOU do, and what evidence shows it worked?'}
     else:
         special = {"kind": "resume", "text": f'Your resume says “{req.candidate.resume.experience[-1]}”. Walk me through your exact contribution and how the result was measured.'}
-    return Questions(behavioural=behaviour, technical=technical, special=special)
+    special["tests"] = "Tests whether the résumé claim is real" if special["kind"] == "resume" else "Tests evidence and personal ownership"
+    return Questions(behavioural=behaviour, technical=technical, behavioural_tests="Tests ownership and reflection", technical_tests="Tests reasoning and how they check their work", special=special)
 
 
 def mock_answer(req) -> dict:
@@ -75,6 +78,44 @@ def best_fit(job: Job, candidates: list[Candidate]) -> str:
     return max(candidates, key=lambda c: (fit_score(job, c), c.id)).id
 
 
+def rating_comparisons(req):
+    comparisons = []
+    for c in req.candidates:
+        a = c.attributes
+        scale = lambda value: max(1, min(5, round(value / 2)))
+        truth = Rating(communication=scale(a.charisma), evidence=scale(a.smartness), honesty=scale(11 - a.larping), job_fit=max(1, min(5, round(fit_score(req.job, c)))))
+        user = req.ratings.get(c.id)
+        flags = [f"{key.replace('_', ' ').title()}: you rated {getattr(user, key)}/5; the simulation benchmark is {value}/5. Separate confident delivery from demonstrated ability." for key, value in truth.model_dump().items() if user and abs(getattr(user, key) - value) >= 2]
+        comparisons.append(RatingComparison(id=c.id, truth=truth, user=user, flags=flags))
+    return comparisons
+
+
+def learning_content(req):
+    annotations = {}
+    for c in req.candidates:
+        annotations[c.id] = []
+        for t in req.transcripts.get(c.id, []):
+            text = t.a.lower()
+            if "80%" in text and "don't have" not in text:
+                tone, label, why = "bad", "Bluffing", "A big number without a method or personal contribution is hard to trust."
+            elif "don't have" in text or "can't walk" in text:
+                tone, label, why = "bad", "Unsupported claim", "The follow-up reveals that the original claim lacks first-hand evidence."
+            elif "first attempt failed" in text or "checklist" in text:
+                tone, label, why = "good", "Specific example", "Concrete actions, checks and a failure show how the candidate thinks."
+            elif "asked for help" in text or "what i owned" in text or "documented what worked" in text:
+                tone, label, why = "good", "Ownership and reflection", "Naming your own actions and learning makes your contribution credible."
+            else:
+                tone, label, why = "neutral", "Needs a follow-up", "Listen for a concrete action and outcome before drawing conclusions."
+            annotations[c.id].append({"tone": tone, "label": label, "why_interviewers_notice": why})
+    ordered = sorted(req.candidates, key=lambda c: fit_score(req.job, c))
+    def lessons(c, advice):
+        ts = req.transcripts.get(c.id, [])
+        return [{"candidate_id": c.id, "quote": ts[i % len(ts)].a, "advice": tip} for i, tip in enumerate(advice)] if ts else []
+    dos = lessons(ordered[-1], ["Explain your own actions, not just the team's headline.", "Describe how you checked your work and what changed.", "Use a concrete example; thoughtful pauses are fine."])
+    donts = lessons(ordered[0], ["Don't lead with an impressive number you cannot substantiate.", "Don't substitute confident buzzwords for your actual contribution.", "Don't inflate ownership: explain your real role and gaps early."])
+    return {"annotations": annotations, "dos": dos, "donts": donts, "rating_comparisons": rating_comparisons(req)}
+
+
 def mock_evaluation(req) -> Evaluation:
     best = best_fit(req.job, req.candidates)
     turns = [t for ts in req.transcripts.values() for t in ts]
@@ -96,4 +137,4 @@ def mock_evaluation(req) -> Evaluation:
     score = max(1, coverage_score + comparable_score + (30 if req.hired_id == best else 0))
     if req.hired_id != best:
         score = min(score, 70)
-    return Evaluation(best_fit_id=best, hired_was_best=req.hired_id == best, interviewer_score=score, verdict="You hired for substance, not just the story." if req.hired_id == best else "The strongest story wasn't the strongest signal. Look for evidence, not polish.", candidate_summaries=summaries, best_questions=[{"text": t.q, "why": "Asked for specific ownership or evidence rather than accepting the headline."} for t in strong[:3]], weak_questions=[{"text": t.q, "why": "A useful opener, but follow it with a concrete example and measurable result."} for t in weak[:2]], tips=["Ask every candidate one comparable job-relevant question.", "Probe ownership: what did you personally do, and what would you change?", "Don't mistake nervousness for lack of ability. Mock feedback uses question-type heuristics, not a semantic truth detector."])
+    return Evaluation(**learning_content(req), best_fit_id=best, hired_was_best=req.hired_id == best, interviewer_score=score, verdict="You hired for substance, not just the story." if req.hired_id == best else "The strongest story wasn't the strongest signal. Look for evidence, not polish.", candidate_summaries=summaries, best_questions=[{"text": t.q, "why": "Asked for specific ownership or evidence rather than accepting the headline."} for t in strong[:3]], weak_questions=[{"text": t.q, "why": "A useful opener, but follow it with a concrete example and measurable result."} for t in weak[:2]], tips=["Ask every candidate one comparable job-relevant question.", "Probe ownership: what did you personally do, and what would you change?", "Don't mistake nervousness for lack of ability. Mock feedback uses question-type heuristics, not a semantic truth detector."])

@@ -1,5 +1,131 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&family=Manrope:wght@400;500;600;650;700;750;800&display=swap");
 
+.portrait {
+  width: 96px;
+  height: 96px;
+  border-radius: 22px;
+  background: #dcece7;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.portrait.prominent {
+  width: 100%;
+  height: 245px;
+  border-radius: 20px;
+  margin-bottom: 18px;
+}
+.question-tests {
+  display: block;
+  margin-top: 12px;
+  color: #416b61;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.rating-panel {
+  max-width: 760px;
+  margin: 30px auto;
+}
+.rating-panel h1 {
+  font-size: 32px;
+  margin: 20px 0;
+}
+.rating-panel fieldset {
+  border: 0;
+  padding: 12px 0;
+}
+.rating-options {
+  display: flex;
+  gap: 12px;
+  margin-top: 10px;
+}
+.rating-options button {
+  min-width: 48px;
+  justify-content: center;
+}
+.rating-options .selected {
+  background: #1f6657;
+  color: white;
+}
+.lesson-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 36px;
+}
+.lessons article {
+  padding: 20px 0;
+  border-bottom: 1px solid #ddd;
+}
+.lessons h3 {
+  line-height: 1.6;
+}
+.lessons blockquote {
+  margin: 12px 0;
+  font-size: 14px;
+  line-height: 1.8;
+  border-left: 3px solid #508b74;
+  padding-left: 16px;
+}
+.lessons.bad blockquote {
+  border-color: #c16c65;
+}
+.rating-comparison,
+.annotated-replay,
+.hire-result {
+  margin: 28px 0;
+}
+.rating-comparison article,
+.annotated-replay article {
+  margin-top: 28px;
+}
+.rating-table {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+}
+.rating-table span {
+  display: block;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.rating-flag {
+  color: #924338;
+  padding: 10px;
+  background: #fff1e9;
+  border-radius: 8px;
+}
+.replay-turn {
+  padding: 20px;
+  margin: 16px 0;
+  border-left: 4px solid #919a95;
+  border-radius: 8px;
+  background: #f4f5f3;
+  line-height: 1.8;
+}
+.replay-turn.good {
+  background: #edf8f0;
+  border-color: #38815d;
+}
+.replay-turn.bad {
+  background: #fff0ec;
+  border-color: #be6657;
+}
+.replay-turn aside {
+  font-size: 13px;
+}
+.hire-result h2 {
+  font-size: 22px;
+}
+@media (max-width: 760px) {
+  .lesson-grid {
+    grid-template-columns: 1fr;
+  }
+  .rating-table {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 :root {
   font-family: "DM Sans", sans-serif;
   color: #242d29;

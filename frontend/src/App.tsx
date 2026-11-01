@@ -18,7 +18,16 @@ import {
   Users,
   X,
 } from "lucide-react";
-import type { Candidate, Evaluation, Job, Questions, Turn } from "./types";
+import type {
+  Candidate,
+  Evaluation,
+  Job,
+  Questions,
+  Turn,
+  Rating,
+} from "./types";
+import { createAvatar } from "@dicebear/core";
+import { avataaars } from "@dicebear/collection";
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(
@@ -37,12 +46,42 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
     );
   return response.json();
 }
-const initials = (name: string) =>
-  name
-    .split(" ")
-    .map((n) => n[0])
-    .join("")
-    .slice(0, 2);
+function Portrait({
+  candidate,
+  prominent = false,
+}: {
+  candidate: Candidate;
+  prominent?: boolean;
+}) {
+  const nervous = candidate.attributes.mood < 5;
+  const src = createAvatar(avataaars, {
+    seed: candidate.id + candidate.name,
+    mouth: [nervous ? "concerned" : "smile"],
+    eyebrows: [nervous ? "sadConcerned" : "defaultNatural"],
+    eyes: ["default"],
+    backgroundColor: ["dcece7"],
+    accessoriesProbability: 0,
+  }).toDataUri();
+  return (
+    <img
+      className={"portrait" + (prominent ? " prominent" : "")}
+      src={src}
+      alt={`Illustrated portrait of ${candidate.name}`}
+    />
+  );
+}
+const ratingLabels = {
+  communication: "Communication",
+  evidence: "Evidence / specifics",
+  honesty: "Honesty",
+  job_fit: "Job fit",
+};
+const defaultRating: Rating = {
+  communication: 3,
+  evidence: 3,
+  honesty: 3,
+  job_fit: 3,
+};
 
 function Resume({
   candidate,
@@ -85,6 +124,7 @@ export default function App() {
   const [job, setJob] = useState<Job | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [transcripts, setTranscripts] = useState<Record<string, Turn[]>>({});
+  const [ratings, setRatings] = useState<Record<string, Rating>>({});
   const [index, setIndex] = useState(0);
   const [entered, setEntered] = useState(false);
   const [duration, setDuration] = useState(300);
@@ -184,6 +224,7 @@ export default function App() {
   }
   function start() {
     setTranscripts({});
+    setRatings({});
     setIndex(0);
     setEntered(false);
     setQuestions(null);
@@ -203,8 +244,7 @@ export default function App() {
     setCustom("");
     setError("");
     setSeconds(duration);
-    if (index === 2) setScreen("hire");
-    else setIndex((i) => i + 1);
+    setScreen("rating");
   }
   useEffect(() => {
     if (screen !== "interview" || !entered || !candidate || round > 3) return;
@@ -274,6 +314,7 @@ export default function App() {
           job,
           candidates,
           transcripts,
+          ratings,
           hired_id: id,
         }),
       );
@@ -345,7 +386,7 @@ export default function App() {
   const step =
     screen === "input" || screen === "summary"
       ? 0
-      : screen === "interview"
+      : screen === "interview" || screen === "rating"
         ? 1
         : screen === "hire"
           ? 2
@@ -404,10 +445,8 @@ export default function App() {
                 </svg>
               </h1>
               <p>
-                You're the interviewer now. Meet three AI candidates, ask the
-                right
-                <br className="desktop" /> questions, and find out if you can
-                spot substance behind the story.
+                A practice lab for students: play the interviewer, meet three AI
+                candidates, and discover what to do in YOUR next interview.
               </p>
             </section>
             <div className="landing-grid">
@@ -659,9 +698,7 @@ export default function App() {
             </div>
             <div className="interview-grid">
               <aside className="panel candidate-panel">
-                <div className={"avatar color-" + index}>
-                  {initials(candidate.name)}
-                </div>
+                <Portrait candidate={candidate} prominent />
                 <h2>{candidate.name}</h2>
                 <p className="muted">
                   Candidate 0{index + 1} · {job?.seniority}
@@ -765,11 +802,13 @@ export default function App() {
                                 kind: "behavioural",
                                 title: "Behavioural",
                                 text: questions.behavioural,
+                                tests: questions.behavioural_tests,
                               },
                               {
                                 kind: "technical",
                                 title: "Technical",
                                 text: questions.technical,
+                                tests: questions.technical_tests,
                               },
                               {
                                 kind: questions.special.kind,
@@ -778,6 +817,7 @@ export default function App() {
                                     ? "Résumé"
                                     : "Follow-up",
                                 text: questions.special.text,
+                                tests: questions.special.tests,
                               },
                             ].map((q) => (
                               <button
@@ -790,6 +830,9 @@ export default function App() {
                                   <ArrowUpRight size={14} />
                                 </span>
                                 {q.text}
+                                <small className="question-tests">
+                                  {q.tests}
+                                </small>
                               </button>
                             ))
                           ) : (
@@ -879,6 +922,76 @@ export default function App() {
           </>
         )}
 
+        {screen === "rating" && candidate && (
+          <section className="panel rating-panel">
+            <div className="eyebrow">
+              TRUST YOUR READ · CANDIDATE {index + 1}/3
+            </div>
+            <Portrait candidate={candidate} />
+            <h1>How did {candidate.name.split(" ")[0]} come across?</h1>
+            <p>
+              Rate before the reveal. Later, compare your instincts with the
+              simulation's hidden profile.
+            </p>
+            {Object.entries(ratingLabels).map(([key, label]) => (
+              <fieldset key={key}>
+                <legend>{label}</legend>
+                <div className="rating-options">
+                  {[1, 2, 3, 4, 5].map((value) => (
+                    <button
+                      key={value}
+                      aria-label={`${label}: ${value}`}
+                      aria-pressed={
+                        (ratings[candidate.id] || defaultRating)[
+                          key as keyof Rating
+                        ] === value
+                      }
+                      className={
+                        (ratings[candidate.id] || defaultRating)[
+                          key as keyof Rating
+                        ] === value
+                          ? "selected"
+                          : ""
+                      }
+                      onClick={() =>
+                        setRatings((r) => ({
+                          ...r,
+                          [candidate.id]: {
+                            ...(r[candidate.id] || defaultRating),
+                            [key]: value,
+                          },
+                        }))
+                      }
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            ))}
+            <p className="small muted">
+              1 = low · 3 = mixed · 5 = strong. Defaults are 3 until changed.
+            </p>
+            <button
+              className="primary"
+              onClick={() => {
+                setRatings((r) => ({
+                  ...r,
+                  [candidate.id]: r[candidate.id] || defaultRating,
+                }));
+                if (index === 2) setScreen("hire");
+                else {
+                  setIndex((i) => i + 1);
+                  setScreen("interview");
+                }
+              }}
+            >
+              {index === 2 ? "Choose your hire" : "Next candidate"}
+              <ArrowRight size={16} />
+            </button>
+          </section>
+        )}
+
         {screen === "hire" && (
           <>
             <section className="page-heading">
@@ -890,9 +1003,9 @@ export default function App() {
               </p>
             </section>
             <div className="hire-grid">
-              {candidates.map((c, i) => (
+              {candidates.map((c) => (
                 <section key={c.id} className="panel hire-card">
-                  <div className={"avatar color-" + i}>{initials(c.name)}</div>
+                  <Portrait candidate={c} />
                   <h2>{c.name}</h2>
                   <Resume candidate={c} compact />
                   <div className="recap">
@@ -934,37 +1047,56 @@ export default function App() {
 
         {screen === "feedback" && evaluation && (
           <>
-            <section className="reveal-hero">
-              <div className="score">
-                <strong>{evaluation.interviewer_score}</strong>
-                <span>/ 100</span>
-                <label>INTERVIEWER SCORE</label>
-              </div>
-              <div>
-                <div className="eyebrow">
-                  THE REVEAL · {mode.mock ? "MOCK COACHING" : "YOUR DEBRIEF"}
-                </div>
-                <h1>
-                  {evaluation.hired_was_best
-                    ? "Good instincts. Better evidence."
-                    : "There’s more to the story."}
-                </h1>
-                <p>{evaluation.verdict}</p>
-                <div className="decision-label">
-                  You hired{" "}
-                  <strong>
-                    {candidates.find((c) => c.id === hired)?.name}
-                  </strong>
-                  <span> / </span>Best fit was{" "}
-                  <strong>
-                    {
-                      candidates.find((c) => c.id === evaluation.best_fit_id)
-                        ?.name
-                    }
-                  </strong>
-                </div>
-              </div>
+            <section className="page-heading">
+              <div className="eyebrow">YOUR PERSONAL INTERVIEW PLAYBOOK</div>
+              <h1>What to do in YOUR interviews</h1>
+              <p>
+                Borrow the strongest signals. Leave the empty claims behind.
+              </p>
             </section>
+            <div className="lesson-grid">
+              {[
+                {
+                  title: "Do · make your contribution clear",
+                  lessons: evaluation.dos,
+                  tone: "good",
+                },
+                {
+                  title: "Don't · let polish replace proof",
+                  lessons: evaluation.donts,
+                  tone: "bad",
+                },
+              ].map((group) => (
+                <section
+                  className={"panel lessons " + group.tone}
+                  key={group.title}
+                >
+                  <h2>{group.title}</h2>
+                  {group.lessons.length ? (
+                    group.lessons.map((lesson, i) => (
+                      <article key={i}>
+                        <h3>
+                          {i + 1}. {lesson.advice}
+                        </h3>
+                        <blockquote>“{lesson.quote}”</blockquote>
+                        <p className="small muted">
+                          {
+                            candidates.find((c) => c.id === lesson.candidate_id)
+                              ?.name
+                          }{" "}
+                          · exact answer excerpt
+                        </p>
+                      </article>
+                    ))
+                  ) : (
+                    <p>
+                      No answers from this candidate yet. Interview them next
+                      time to unlock evidence-backed lessons.
+                    </p>
+                  )}
+                </section>
+              ))}
+            </div>
             <div className="section-label">
               <h2>Behind the résumé</h2>
               <span>
@@ -979,9 +1111,7 @@ export default function App() {
                 return (
                   <section className="panel reveal-card" key={c.id}>
                     <div className="reveal-name">
-                      <div className={"avatar small-avatar color-" + i}>
-                        {initials(c.name)}
-                      </div>
+                      <Portrait candidate={c} />
                       <div>
                         <h3>{c.name}</h3>
                         <span className="muted small">
@@ -993,6 +1123,8 @@ export default function App() {
                         </span>
                       </div>
                     </div>
+                    <h3>{c.archetype}</h3>
+                    <p>{c.archetype_blurb}</p>
                     <p>{summary?.summary}</p>
                     <div className="attributes">
                       {Object.entries(c.attributes).map(([key, value]) => (
@@ -1033,6 +1165,86 @@ export default function App() {
                 );
               })}
             </div>
+            <section className="panel rating-comparison">
+              <h2>How accurate was your read?</h2>
+              <p>
+                Fictional profile benchmarks, not measurements of real people.
+                Gaps of 2 or more are flagged.
+              </p>
+              {evaluation.rating_comparisons.map((r) => (
+                <article key={r.id}>
+                  <h3>{candidates.find((c) => c.id === r.id)?.name}</h3>
+                  <div className="rating-table">
+                    {Object.entries(ratingLabels).map(([key, label]) => (
+                      <p key={key}>
+                        <strong>{label}</strong>
+                        <span>
+                          You: {r.user?.[key as keyof Rating] ?? "Not rated"} ·
+                          Profile: {r.truth[key as keyof Rating]}/5
+                        </span>
+                      </p>
+                    ))}
+                  </div>
+                  {r.flags.map((flag) => (
+                    <p className="rating-flag" key={flag}>
+                      {flag}
+                    </p>
+                  ))}
+                  {!r.flags.length && (
+                    <p className="muted">
+                      {r.user
+                        ? "Your read was within one point on every dimension."
+                        : "No rating submitted."}
+                    </p>
+                  )}
+                </article>
+              ))}
+            </section>
+            <section className="panel annotated-replay">
+              <h2>Annotated replay · see what interviewers notice</h2>
+              {candidates.map((c) => (
+                <article key={c.id}>
+                  <h3>
+                    {c.name} · {c.archetype}
+                  </h3>
+                  {(transcripts[c.id] || []).length ? (
+                    transcripts[c.id].map((turn, i) => {
+                      const note = evaluation.annotations[c.id]?.[i];
+                      return (
+                        <div
+                          key={i}
+                          className={"replay-turn " + (note?.tone || "neutral")}
+                        >
+                          <strong>{turn.q}</strong>
+                          <p>{turn.a}</p>
+                          {note && (
+                            <aside>
+                              <b>{note.label}</b> ·{" "}
+                              {note.why_interviewers_notice}
+                            </aside>
+                          )}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p>No answers recorded.</p>
+                  )}
+                </article>
+              ))}
+            </section>
+            <section className="panel hire-result">
+              <h2>Your hiring decision · {evaluation.interviewer_score}/100</h2>
+              <p>
+                You hired {candidates.find((c) => c.id === hired)?.name}. Best
+                fit:{" "}
+                {candidates.find((c) => c.id === evaluation.best_fit_id)?.name}.
+              </p>
+              <p>{evaluation.verdict}</p>
+              <small>
+                The hiring score is secondary. Take your lessons into your next
+                real interview.
+              </small>
+            </section>
             <div className="feedback-grid">
               <section className="panel">
                 <h2>Your question game</h2>

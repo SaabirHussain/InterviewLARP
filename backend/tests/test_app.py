@@ -89,6 +89,9 @@ def test_candidates_new_and_varied():
     assert len({c.voice_id for c in a}) == 3
     assert any(c.attributes.larping >= 8 and c.attributes.smartness <= 4 for c in a)
     assert all(set(c.fabricated_claims).issubset(c.resume.experience) for c in a)
+    assert len({c.archetype for c in a}) == 3
+    assert all(c.archetype_blurb for c in a)
+    assert next(c for c in a if c.attributes.larping > 7).archetype == "The Smooth Bluffer"
 
 
 def test_mock_score_rewards_balanced_coverage_and_probing():
@@ -142,19 +145,72 @@ def test_complete_mock_flow():
         for round_number in range(1, 4):
             q = client.post("/api/questions", json={"job": job, "candidate": c, "transcript": transcript, "round": round_number}).json()
             assert q["special"]["kind"] == ("resume" if round_number == 1 else "followup")
+            assert all(q[k] for k in ["behavioural_tests", "technical_tests"])
+            assert q["special"]["tests"]
             a = client.post("/api/answer", json={"job": job, "candidate": c, "transcript": transcript, "question": q["special"]["text"]})
             assert a.status_code == 200
             transcript.append({"q": q["special"]["text"], "a": a.json()["answer"], "kind": q["special"]["kind"]})
         transcripts[c["id"]] = transcript
-    payload = {"job": job, "candidates": candidates, "transcripts": transcripts, "hired_id": candidates[0]["id"]}
+    ratings = {c['id']: dict(communication=5, evidence=5, honesty=5, job_fit=5) for c in candidates}
+    payload = {"job": job, "candidates": candidates, "transcripts": transcripts, "ratings": ratings, "hired_id": candidates[0]["id"]}
     result = client.post("/api/evaluate", json=payload)
     assert result.status_code == 200
     assert 1 <= result.json()["interviewer_score"] <= 100
     assert len(result.json()["candidate_summaries"]) == 3
+    body = result.json()
+    assert len(body['dos']) == len(body['donts']) == 3
+    for lesson in body['dos'] + body['donts']:
+        assert lesson['quote'] in [t['a'] for t in transcripts[lesson['candidate_id']]]
+    assert all(len(body['annotations'][c['id']]) == 3 for c in candidates)
+    bluffer = next(c for c in candidates if c['attributes']['larping'] > 7)
+    assert body['annotations'][bluffer['id']][0]['tone'] == 'bad'
+    comparison = next(r for r in body['rating_comparisons'] if r['id'] == bluffer['id'])
+    assert comparison['truth']['honesty'] == 1
+    assert any('Honesty' in flag for flag in comparison['flags'])
     empty = client.post("/api/evaluate", json={**payload, "transcripts": {}})
     assert empty.status_code == 200
     assert empty.json()["best_questions"] == []
+    assert empty.json()['dos'] == empty.json()['donts'] == []
+    assert all(notes == [] for notes in empty.json()['annotations'].values())
     assert client.post("/api/evaluate", json={**payload, "hired_id": "wrong"}).status_code == 422
+    assert client.post('/api/evaluate', json={**payload, 'ratings': {'wrong': ratings[candidates[0]['id']]}}).status_code == 422
+    assert client.post('/api/evaluate', json={**payload, 'ratings': {candidates[0]['id']: dict(communication=6, evidence=1, honesty=1, job_fit=1)}}).status_code == 422
+
+
+def test_invalid_generated_learning_content_falls_back(monkeypatch):
+    candidates = mock_candidates(PRESETS[0])
+    req = EvaluateRequest(job=PRESETS[0], candidates=candidates, transcripts={c.id: [Turn(q='Evidence?', a='A real answer.', kind='resume')] for c in candidates}, hired_id=candidates[0].id)
+    async def generated(*args, **kwargs):
+        result = mock_evaluation(req)
+        result.dos[0].quote = 'Invented quote'
+        return result
+    monkeypatch.setattr('app.main.generate', generated)
+    result = TestClient(app).post('/api/evaluate', json=req.model_dump()).json()
+    assert result['dos'][0]['quote'] == 'A real answer.'
+    assert all(r['user'] is None for r in result['rating_comparisons'])
+
+
+def test_new_fields_require_validation_and_fallback(monkeypatch):
+    from app.models import Evaluation, Rating
+    candidates = mock_candidates(PRESETS[0])
+    req = EvaluateRequest(job=PRESETS[0], candidates=candidates, transcripts={}, hired_id=candidates[0].id)
+    result = mock_evaluation(req)
+    req.transcripts = {result.best_fit_id: [Turn(q='An example?', a='I checked my work.', kind='technical')]}
+    partial = mock_evaluation(req)
+    assert len(partial.dos) == 3 and partial.donts == []
+    req.transcripts = {}
+    req.ratings = {r.id: r.truth for r in result.rating_comparisons}
+    assert all(not r.flags for r in mock_evaluation(req).rating_comparisons)
+    with pytest.raises(ValidationError):
+        Rating(communication=0, evidence=3, honesty=3, job_fit=3)
+    monkeypatch.setenv('LLM_API_KEY', 'not-a-real-key')
+    original = httpx.AsyncClient
+    malformed = result.model_dump()
+    del malformed['annotations']
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(malformed)}}]}))
+    monkeypatch.setattr(llm.httpx, 'AsyncClient', lambda **kwargs: original(transport=transport))
+    generated = asyncio.run(llm.generate(Evaluation, '', {}, lambda: mock_evaluation(req)))
+    assert generated.annotations == {c.id: [] for c in candidates}
 
 
 def test_empty_and_invalid_requests():

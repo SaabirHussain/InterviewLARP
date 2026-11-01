@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@dicebear/collection": "^9.4.2",
+    "@dicebear/core": "^9.4.3",
     "@sentry/react": "^11.10.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",

@@ -1,6 +1,20 @@
 # InterviewLARP
 
-**Read between the résumé lines.** A complete role-playing game: set a job, interview three fictional AI candidates for three rounds each, hire one, and reveal their hidden attributes and bluffing. FastAPI + httpx backend, React + TypeScript + Vite frontend. Fully playable without keys.
+**Practice from the other side of the table.** A learning lab for students: play the interviewer to discover what makes a candidate stand out, then take those lessons into YOUR interviews. Set a role, interview three fictional AI candidates, rate your impressions, and unlock an evidence-backed playbook. Hiring is a secondary game mechanic. FastAPI + httpx backend, React + TypeScript + Vite frontend. Fully playable without keys.
+
+## Student learning loop
+
+- Each game includes three distinct hidden archetypes. Mock mode uses The Prepared One, The Nervous Genius and The Smooth Bluffer, consistent with their attributes and answer behaviours. Archetypes and blurbs appear only in feedback, never in interview or hire cards.
+- Suggested questions include short explanations of what they test (`behavioural_tests`, `technical_tests`, `special.tests`).
+- After every interview, including skips and timer expiry, rate Communication, Evidence/specifics, Honesty and Job fit on a 1–5 scale before advancing. Defaults are visibly 3; ratings are sent as a candidate-ID-keyed `ratings` map to `/api/evaluate`.
+- Feedback starts with three do's from the strongest role-fit candidate and three don'ts from the weakest. Each quotes an exact answer. Skipping either candidate means no quotes/lessons for that side; we never invent transcript evidence. Short interviews may reuse a moment for different lessons.
+- Feedback reveals archetypes, attributes and inflated claims, compares your ratings, and includes an annotated answer-by-answer replay (green/good, red/bad, neutral, plus text labels so colour isn't required). Hiring score remains below the learning content.
+- Rating benchmarks are deterministic fiction: Communication = charisma/2, Evidence = smartness/2, Honesty = (11−larping)/2, rounded and clamped to 1–5. Job fit is the role-weighted fit score rounded and clamped to 1–5. Gaps of two points or more are flagged. These are teaching heuristics, not psychometrics or rules for judging real people.
+- Mock annotations use answer-text heuristics; LLM coaching uses the same required Pydantic schema, retry-once and fallback path. API validation rejects invented lesson quotes/misaligned replay arrays; rating truth is always recalculated from the hidden profile. No live provider credentials are required.
+
+### Local illustrated avatars and license
+
+Avatars are SVG data URIs generated locally using `@dicebear/core` and `@dicebear/collection` v9, seeded by candidate ID/name. No avatar service/network calls. The **Avataaars** style by Pablo Stanley is [free for personal and commercial use](https://avataaars.com/), as confirmed by [DiceBear's style/license page](https://www.dicebear.com/styles/avataaars/); DiceBear's JS packages are MIT licensed. Low mood maps to concerned mouths/sad eyebrows, higher mood to smiling mouths. Appearance is fictional and not a measure of competence. No talking animation is used.
 
 ## Setup and development
 
