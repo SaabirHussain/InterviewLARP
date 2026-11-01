@@ -146,6 +146,8 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [hired, setHired] = useState("");
   const [mode, setMode] = useState({ mock: true, voice: false });
+  const [delivering, setDelivering] = useState(false);
+  const deliveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generation = useRef(0);
   const {
     speak,
@@ -167,9 +169,34 @@ export default function App() {
   const turns = candidate ? transcripts[candidate.id] || [] : [];
   const round = turns.length + 1;
 
+  function stopDelivery() {
+    if (deliveryTimer.current) clearTimeout(deliveryTimer.current);
+    deliveryTimer.current = null;
+    setDelivering(false);
+  }
+
+  function deliver(text: string) {
+    stopDelivery();
+    if (!text.trim()) return;
+    setDelivering(true);
+    const duration = Math.min(
+      30000,
+      Math.max(1800, text.trim().split(/\s+/).length * 350),
+    );
+    deliveryTimer.current = setTimeout(() => setDelivering(false), duration);
+  }
+
+  useEffect(
+    () => () => {
+      if (deliveryTimer.current) clearTimeout(deliveryTimer.current);
+    },
+    [],
+  );
+
   useEffect(() => {
     stopAudio();
     cancelRecording();
+    stopDelivery();
   }, [screen, candidate?.id]);
 
   useEffect(() => {
@@ -227,6 +254,7 @@ export default function App() {
   }
   function next() {
     stopAudio();
+    stopDelivery();
     cancelRecording();
     setEntered(false);
     setQuestions(null);
@@ -267,6 +295,7 @@ export default function App() {
   async function ask(text: string, kind: string) {
     if (busy || !text.trim() || round > 3 || seconds === 0) return;
     stopAudio();
+    stopDelivery();
     cancelRecording();
     setBusy(true);
     setError("");
@@ -287,6 +316,7 @@ export default function App() {
           { q: text, a: result.answer, kind },
         ],
       }));
+      deliver(result.answer);
       void speak(result.answer, candidate, index);
     } catch (e) {
       setError((e as Error).message);
@@ -642,7 +672,11 @@ export default function App() {
             </div>
             <div className="interview-grid">
               <aside className="panel candidate-panel">
-                <Portrait candidate={candidate} prominent talking={talking} />
+                <Portrait
+                  candidate={candidate}
+                  prominent
+                  talking={talking || delivering}
+                />
                 <h2>{candidate.name}</h2>
                 <p className="muted">
                   Candidate 0{index + 1} · {job?.seniority}
@@ -674,6 +708,7 @@ export default function App() {
                         className="primary"
                         onClick={() => {
                           setEntered(true);
+                          deliver(candidate.intro_line);
                           void speak(candidate.intro_line, candidate, index);
                         }}
                       >

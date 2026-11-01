@@ -26,8 +26,8 @@ def mock_candidates(job: Job) -> list[Candidate]:
     random.shuffle(profiles)
     result = []
     for i, (mood, smartness, charisma, larping) in enumerate(profiles):
-        claim = f"Led a team of 12 delivering a company-wide {job.skills[0]} initiative"
-        claims = [claim, "Improved team performance by 80% in one month"] if larping > 7 else ["Sole owner of the team's onboarding playbook"]
+        claim = f"Led a small team project using {job.skills[0]}"
+        claims = [claim, "Helped the team finish tasks 20% faster"] if larping > 7 else ["Sole owner of the team's onboarding playbook"]
         archetype, blurb = ("The Smooth Bluffer", "Confident headlines hide missing evidence.") if larping > 7 else ("The Nervous Genius", "Quiet delivery, careful reasoning; nerves are not lack of ability.") if smartness > 8 else ("The Prepared One", "Warm, structured examples make their contribution easy to follow.")
         result.append(Candidate.model_validate({
             "id": str(uuid.uuid4()), "name": names[i], "voice_id": VOICES[i],
@@ -69,13 +69,13 @@ def mock_answer(req) -> dict:
     round_index = min(len(req.transcript), 2)
     if a.larping > 7:
         answers = {
-            'behavioural': "Absolutely — when a deadline slipped, I rallied everyone around my vision. We improved performance by 80% through a best-in-class transformation, and leadership loved the energy.",
-            'technical': f"For {skill}, I'd use an enterprise-grade framework and scale it across the organisation. It delivered an 80% improvement; my specialists handled the details, so I can't walk through the underlying method.",
-            'resume': "Right, the resume makes my role sound bigger than it was. I coordinated updates rather than leading implementation, and I don't have the raw numbers behind that 80% claim.",
-            'followup': "To be specific, I sent status emails and presented the team's slides. I don't have evidence that my own work caused the improvement; I borrowed the headline from a leadership deck.",
-            'custom': "My strength is inspiring people to think bigger and move fast. I tend to describe the whole team's success as mine; I don't have a concrete example of my individual contribution ready.",
+            'behavioural': "When we were behind on a group project, I helped everyone agree on what to finish first. We got most of it done by the deadline, though I didn't really track which changes made the difference.",
+            'technical': f"For {skill}, I'd probably start with a similar example and adapt it to what we need. That worked on our project, although a teammate handled most of the testing, so I'm not sure how they checked it.",
+            'resume': "I helped organise the tasks and kept the group updated. The improvement was roughly what we noticed at the time; I don't have a clear before-and-after measurement.",
+            'followup': "I put together the progress update and helped with the presentation. I wasn't the one doing that part of the implementation, so I'd need to check with my teammate about the exact steps.",
+            'custom': "I'm usually comfortable getting a group started and explaining our work. I can give you the general approach, but I'd need to look back at my notes for the details of my part.",
         }
-        endings = ["I usually start with the big picture rather than the mechanics.", "Looking back, I should have checked the details before taking credit.", "After these questions, I need to distinguish what I presented from what I actually did."]
+        endings = ["I think the team worked pretty well together.", "I'd probably check that more carefully next time.", "That's about as much as I can remember without the project notes."]
     elif a.smartness > 8:
         answers = {
             'behavioural': "Um, I missed a handover because I assumed a teammate had seen my notes. I owned the mistake, apologised, and made a checklist with them so each handover had a named reviewer.",

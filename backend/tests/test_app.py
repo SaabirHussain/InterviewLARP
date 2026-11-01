@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import json
 import os
 import subprocess
@@ -12,7 +13,7 @@ from pydantic import ValidationError
 from app import llm
 from app.main import app
 from app.mock import PRESETS, best_fit, mock_candidates, mock_evaluation, mock_answer
-from app.models import Answer, AnswerRequest, EvaluateRequest, Resume, Turn
+from app.models import Answer, AnswerRequest, CandidateBatch, EvaluateRequest, Resume, Turn
 
 
 @pytest.fixture(autouse=True)
@@ -70,6 +71,45 @@ def test_provider_success(monkeypatch):
     transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"choices": [{"message": {"content": '```json\n{"answer":"live"}\n```'}}]}))
     monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kwargs: original(transport=transport))
     assert asyncio.run(llm.generate(Answer, "", {}, lambda: {"answer": "safe"})).answer == "live"
+
+
+def test_model_trait_alias_keeps_api_compatible(monkeypatch):
+    candidates = mock_candidates(PRESETS[0])
+    payload = {"candidates": [c.model_dump() for c in candidates]}
+    monkeypatch.setenv("LLM_API_KEY", "test-not-a-real-key")
+    original = httpx.AsyncClient
+
+    def handler(request):
+        messages = json.loads(request.content)["messages"]
+        assert "larping" not in json.dumps(messages).lower()
+        assert "making_stuff_up" in json.dumps(messages)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(llm.model_trait_names(payload))}}]})
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handler)))
+    result = asyncio.run(llm.generate(CandidateBatch, "Use realistic interview language.", payload, lambda: payload))
+    assert result.model_dump() == payload
+    assert "larping" in result.candidates[0].attributes.model_dump()
+    assert llm.model_trait_names({}) == {}
+    assert llm.model_trait_names({"answer": "An ordinary answer"}) == {"answer": "An ordinary answer"}
+
+
+def test_interview_prompts_are_grounded(monkeypatch):
+    main = importlib.import_module("app.main")
+    prompts = []
+
+    async def capture(schema, instruction, data, fallback):
+        prompts.append(instruction)
+        return schema.model_validate(fallback())
+
+    monkeypatch.setattr(main, "generate", capture)
+    client = TestClient(app)
+    job = PRESETS[0].model_dump()
+    candidates = client.post("/api/candidates", json={"job": job}).json()
+    result = client.post("/api/answer", json={"job": job, "candidate": candidates[0], "question": "Tell me about a project."})
+    assert result.status_code == 200
+    assert all("larping" not in p.lower() for p in prompts)
+    assert all("making stuff up / bluffing" in p for p in prompts)
+    assert all("cartoonish exaggeration" in p for p in prompts)
 
 
 def test_best_fit_deterministic_and_role_sensitive():

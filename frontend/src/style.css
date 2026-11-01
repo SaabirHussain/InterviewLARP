@@ -15,14 +15,24 @@
   margin-bottom: 18px;
 }
 .portrait.talking {
-  animation: speaking 0.7s ease-in-out infinite alternate;
+  animation: speaking 0.65s ease-in-out infinite;
+  transform-origin: 50% 80%;
+  outline: 3px solid #72b3a2;
+  outline-offset: 4px;
 }
 @keyframes speaking {
-  from {
-    transform: translateY(0);
+  0%,
+  100% {
+    transform: translateY(0) rotate(-2deg) scale(1);
+    box-shadow: 0 0 0 5px #72b3a226;
   }
-  to {
-    transform: translateY(-3px) rotate(0.5deg);
+  35% {
+    transform: translateY(-12px) rotate(3deg) scale(1.045, 1.025);
+    box-shadow: 0 0 22px 10px #72b3a255;
+  }
+  70% {
+    transform: translateY(-4px) rotate(-3deg) scale(0.985, 1.035);
+    box-shadow: 0 0 10px 7px #72b3a238;
   }
 }
 @media (prefers-reduced-motion: reduce) {
