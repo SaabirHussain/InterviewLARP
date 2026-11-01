@@ -1,0 +1,160 @@
+import asyncio
+import json
+import os
+import subprocess
+import sys
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
+
+from app import llm
+from app.main import app
+from app.mock import PRESETS, best_fit, mock_candidates
+from app.models import Answer, Resume
+
+
+@pytest.fixture(autouse=True)
+def no_keys(monkeypatch):
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+
+
+@pytest.mark.parametrize("text", ['{"answer":"ok"}', '```json\n{"answer":"ok"}\n```', 'Prose {"answer":"ok","nested":{"x":"}"}} trailing {"ignored":1}'])
+def test_json_parsing(text):
+    assert llm.parse_json(text)["answer"] == "ok"
+
+
+@pytest.mark.parametrize("text", ["", "```json\nnope```", "{broken}"])
+def test_bad_json(text):
+    with pytest.raises(ValueError):
+        llm.parse_json(text)
+
+
+def test_schema_validation():
+    with pytest.raises(ValidationError):
+        Answer.model_validate(llm.parse_json('{"answer":""}'))
+    with pytest.raises(ValidationError):
+        Resume(education="Example", experience=[], skills=[], projects=[])
+
+
+def test_missing_key_fallback():
+    assert asyncio.run(llm.generate(Answer, "", {}, lambda: {"answer": "mock"})).answer == "mock"
+
+
+@pytest.mark.parametrize("failure", ["invalid_json", "invalid_schema", "http_error"])
+def test_provider_failure_retries_once(monkeypatch, failure):
+    monkeypatch.setenv("LLM_API_KEY", "test-not-a-real-key")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.test/v1/")
+    monkeypatch.setenv("LLM_MODEL", "example-model")
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        assert str(request.url) == "https://example.test/v1/chat/completions"
+        assert json.loads(request.content)["model"] == "example-model"
+        if failure == "http_error":
+            return httpx.Response(429)
+        return httpx.Response(200, json={"choices": [{"message": {"content": "not JSON" if failure == "invalid_json" else '{"answer":""}'}}]})
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handler)))
+    assert asyncio.run(llm.generate(Answer, "", {}, lambda: {"answer": "safe"})).answer == "safe"
+    assert len(requests) == 2
+
+
+def test_provider_success(monkeypatch):
+    monkeypatch.setenv("LLM_API_KEY", "test-not-a-real-key")
+    original = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"choices": [{"message": {"content": '```json\n{"answer":"live"}\n```'}}]}))
+    monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kwargs: original(transport=transport))
+    assert asyncio.run(llm.generate(Answer, "", {}, lambda: {"answer": "safe"})).answer == "live"
+
+
+def test_best_fit_deterministic_and_role_sensitive():
+    cs = mock_candidates(PRESETS[0])
+    smart = next(c for c in cs if c.attributes.smartness == 9)
+    warm = next(c for c in cs if c.attributes.mood == 9)
+    assert best_fit(PRESETS[0], cs) == smart.id
+    assert best_fit(PRESETS[0], list(reversed(cs))) == smart.id
+    assert best_fit(PRESETS[1], cs) == warm.id
+    with pytest.raises(ValueError):
+        best_fit(PRESETS[0], [])
+
+
+def test_candidates_new_and_varied():
+    a, b = mock_candidates(PRESETS[0]), mock_candidates(PRESETS[0])
+    assert not {c.id for c in a} & {c.id for c in b}
+    assert len({c.voice_id for c in a}) == 3
+    assert any(c.attributes.larping >= 8 and c.attributes.smartness <= 4 for c in a)
+    assert all(set(c.fabricated_claims).issubset(c.resume.experience) for c in a)
+
+
+def test_complete_mock_flow():
+    client = TestClient(app)
+    job = client.get("/api/presets").json()[0]
+    assert client.post("/api/parse-jd", json={"jd_text": "Hiring a Python intern"}).status_code == 200
+    candidates = client.post("/api/candidates", json={"job": job}).json()
+    transcripts = {}
+    for c in candidates:
+        transcript = []
+        for round_number in range(1, 4):
+            q = client.post("/api/questions", json={"job": job, "candidate": c, "transcript": transcript, "round": round_number}).json()
+            assert q["special"]["kind"] == ("resume" if round_number == 1 else "followup")
+            a = client.post("/api/answer", json={"job": job, "candidate": c, "transcript": transcript, "question": q["special"]["text"]})
+            assert a.status_code == 200
+            transcript.append({"q": q["special"]["text"], "a": a.json()["answer"], "kind": q["special"]["kind"]})
+        transcripts[c["id"]] = transcript
+    payload = {"job": job, "candidates": candidates, "transcripts": transcripts, "hired_id": candidates[0]["id"]}
+    result = client.post("/api/evaluate", json=payload)
+    assert result.status_code == 200
+    assert 1 <= result.json()["interviewer_score"] <= 100
+    assert len(result.json()["candidate_summaries"]) == 3
+    empty = client.post("/api/evaluate", json={**payload, "transcripts": {}})
+    assert empty.status_code == 200
+    assert empty.json()["best_questions"] == []
+    assert client.post("/api/evaluate", json={**payload, "hired_id": "wrong"}).status_code == 422
+
+
+def test_empty_and_invalid_requests():
+    client = TestClient(app)
+    assert client.post("/api/parse-jd", json={"jd_text": ""}).status_code == 422
+    assert client.post("/api/parse-jd", json={"jd_text": "  "}).status_code == 422
+    assert client.post("/api/answer", json={}).status_code == 422
+    job = PRESETS[0].model_copy(update={"skills": []}).model_dump()
+    assert client.post("/api/candidates", json={"job": job}).status_code == 200
+
+
+def test_voice_missing_key_returns_503():
+    client = TestClient(app)
+    assert not client.get("/api/status").json()["voice"]
+    assert client.post("/api/tts", json={"text": "hi", "voice_id": "example"}).status_code == 503
+    assert client.post("/api/stt", files={"audio": ("test.webm", b"audio", "audio/webm")}).status_code == 503
+
+
+def test_voice_provider_failure_returns_503(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "test-not-a-real-key")
+    original = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(lambda _: httpx.Response(401))))
+    client = TestClient(app)
+    assert client.post("/api/tts", json={"text": "hi", "voice_id": "example"}).status_code == 503
+    assert client.post("/api/stt", files={"audio": ("test.webm", b"audio", "audio/webm")}).status_code == 503
+
+
+@pytest.mark.parametrize("dsn,expected", [("", 0), ("https://public@example.test/1", 1)])
+def test_sentry_initializes_only_with_dsn(dsn, expected):
+    code = "from unittest.mock import patch\nwith patch('sentry_sdk.init') as init:\n import app.main\n print(init.call_count)"
+    result = subprocess.check_output([sys.executable, "-c", code], env={**os.environ, "SENTRY_DSN": dsn}, text=True)
+    assert int(result.strip()) == expected
+
+
+def test_production_static_and_unknown_api():
+    from app.main import DIST
+
+    if not DIST.is_dir():
+        pytest.skip("Frontend build not present")
+    client = TestClient(app)
+    assert client.get("/").status_code == 200
+    assert "InterviewLARP" in client.get("/").text
+    assert client.get("/api/not-a-route").status_code == 404

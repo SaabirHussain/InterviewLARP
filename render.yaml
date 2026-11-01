@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: interview-larp
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt && cd frontend && npm ci && npm run build
+    startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: NODE_VERSION
+        value: 20.20.2
+      - key: LLM_BASE_URL
+        value: https://api.featherless.ai/v1
+      - key: LLM_MODEL
+        value: meta-llama/Llama-3.1-8B-Instruct
+      - key: LLM_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: VITE_SENTRY_DSN
+        sync: false
