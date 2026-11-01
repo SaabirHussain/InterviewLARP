@@ -66,22 +66,26 @@ Request/response format verified from [official completions docs](https://feathe
 ```dotenv
 LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
 LLM_API_KEY=your_google_ai_studio_key
-LLM_MODEL=gemini-2.5-flash
+LLM_MODEL=gemini-flash-lite-latest
 ```
 
-Base URL and Bearer-auth format verified from [Google's official compatibility docs](https://ai.google.dev/gemini-api/docs/openai). `gemini-2.5-flash` has free-tier input/output in [official pricing](https://ai.google.dev/gemini-api/docs/pricing). Quotas, regional availability and model lifecycles apply; check current docs. Thinking tokens consume completion budget and can cause JSON retry/fallback.
+Base URL and Bearer-auth format verified from [Google's official compatibility docs](https://ai.google.dev/gemini-api/docs/openai). Use `gemini-flash-lite-latest`: `gemini-2.5-flash` returns 404 for new API keys. Quotas, regional availability and model lifecycles apply; check [current pricing](https://ai.google.dev/gemini-api/docs/pricing). Thinking tokens consume completion budget and can cause JSON retry/fallback.
 
 Every model output is requested as JSON, extracted from fenced/prose-wrapped objects, Pydantic-validated, retried once on failure, then replaced with a playable mock. The header indicates provider configuration, not guaranteed live health. Mock JD parsing picks a canned role and preserves an input excerpt; refine it on the editable brief screen.
 
-## Optional voice (deferred; text mode is default)
+## Free browser voice (default) and optional ElevenLabs upgrade
 
-The retained integration activates only with `ELEVENLABS_API_KEY`. Official docs verified:
+No ElevenLabs key is needed for voice. Candidate intros (after clicking **Bring in candidate**) and answers use the browser's `speechSynthesis`. We prefer English voices, listen for asynchronous `voiceschanged`, and select different installed voices for the three candidates when available. Distinct pitch/rate profiles and mood adjustments keep delivery varied even on systems with fewer than three voices. Low mood sounds slower/lower; high mood brighter. **Mute/Unmute** stops current speech and controls future utterances; it does not replay old answers. Moving to another screen/candidate cancels speech and recording. Avatar motion follows actual speech start/end events and respects reduced-motion preferences. Text appears immediately, independently of audio.
+
+Hold the mic (pointer or Space key), release to finish, then edit the question before sending. Browser `SpeechRecognition` / `webkitSpeechRecognition` displays interim results in the question input. **Chrome/Edge work best for voice input**; unsupported browsers show a disabled mic with “Voice input works in Chrome/Edge — type instead”. Microphone permission and localhost/HTTPS are required. Recognition availability also depends on browser/network service support: browser voice has no app API cost, but recognition may send audio to the browser vendor's service and is not guaranteed offline. Permission/service errors retain the typed-question path. Browsers without speech synthesis remain fully playable in text.
+
+If `/api/status` reports `voice: true` (`ELEVENLABS_API_KEY` set), the existing ElevenLabs paths take priority. A failed TTS request/playback falls back to browser speech for that same utterance. While recording for ElevenLabs, browser recognition also runs when supported, retaining an editable fallback transcript if `/api/stt` fails. Without browser recognition, an STT failure asks you to retry/type rather than claiming a transcript exists. Official ElevenLabs docs:
 
 - [List voices](https://elevenlabs.io/docs/api-reference/voices/search): `GET /v2/voices`, `xi-api-key`, `voices[].voice_id`. Assigns three distinct voices with premade IDs as fallback.
 - [Stream TTS](https://elevenlabs.io/docs/api-reference/text-to-speech/stream): `POST /v1/text-to-speech/{voice_id}/stream`, JSON `text`, `model_id=eleven_multilingual_v2`, query `output_format=mp3_44100_128`.
 - [Scribe STT](https://elevenlabs.io/docs/api-reference/speech-to-text/convert): `POST /v1/speech-to-text`, multipart `file`, `model_id=scribe_v1`, response `text`.
 
-Our `/api/stt` accepts multipart field **`audio`**, forwarding it as ElevenLabs **`file`**. Hold the mic to record, release to fill the editable question, then send. Microphone requires localhost/HTTPS and browser permission. With no key, TTS/STT return clean 503s and mic is disabled with a tooltip. Text always displays even if speech fails. Intro playback requires clicking Bring in candidate. Live voice has not been verified without keys.
+Our `/api/stt` accepts multipart field **`audio`**, forwarding it as ElevenLabs **`file`**. Backend TTS/STT still return clean 503s without a key; the frontend uses browser voice instead of calling them. Live audible output and vendor recognition/ElevenLabs services require a real browser/device and are not validated by headless speech spies.
 
 ## Optional Sentry monitoring
 
@@ -104,7 +108,9 @@ Initialization APIs verified from [Sentry FastAPI](https://docs.sentry.io/platfo
 4. Review résumés/transcripts and hire; see the score, hidden attributes, inflated claims, caught/missed bluffs and tips.
 5. Try again prepares new candidate identities for the same job. New job resets setup.
 
-At least one candidate looks spectacular on paper but has high bluffing and low ability. Best fit is deterministic: `0.60 × smartness + 0.20 × mood + 0.20 × charisma − 0.35 × larping`. People-facing role titles (barista/community/sales/customer) use `0.25/0.30/0.45` weights instead. ID breaks ties. The LLM writes narrative but cannot override the best-fit result. Mock coaching uses question/probe heuristics, not semantic truth detection. This is practice, not a real hiring assessment.
+Each game samples three distinct archetypes on the server from eight: The Prepared One, The Nervous Genius, The Smooth Bluffer, The Rambler, The Under-seller, The Idiot, The Cocky One and The Casual One. Individual games can overlap; repeated games are not guaranteed disjoint. The server supplies required archetypes, consistent stat profiles and answer-style guidance to the model, then enforces the assigned types and stats on the response. Mock mode uses the same sampling and has distinct answers for every type/question kind. The Idiot is realistically unprepared, the Cocky One makes confident mistakes, and the Casual One mixes useful substance with slang that may feel authentic or unprofessional. Feedback reveals the type and offers advice; these are fictional behaviours, not labels for judging real students. Gemini sees the trait as `making_stuff_up`; API fields and UI “Larping / bluffing” wording stay unchanged.
+
+Best fit is deterministic: `0.60 × smartness + 0.20 × mood + 0.20 × charisma − 0.35 × larping`. People-facing role titles (barista/community/sales/customer) use `0.25/0.30/0.45` weights instead. ID breaks ties. The LLM writes narrative but cannot override the best-fit result. Mock coaching uses question/probe heuristics, not semantic truth detection. This is practice, not a real hiring assessment.
 
 ## Checks
 

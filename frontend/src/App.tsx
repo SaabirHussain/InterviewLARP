@@ -28,6 +28,7 @@ import type {
 } from "./types";
 import { createAvatar } from "@dicebear/core";
 import { avataaars } from "@dicebear/collection";
+import { useInterviewVoice } from "./useInterviewVoice";
 
 async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(
@@ -49,9 +50,11 @@ async function api<T>(path: string, body?: unknown): Promise<T> {
 function Portrait({
   candidate,
   prominent = false,
+  talking = false,
 }: {
   candidate: Candidate;
   prominent?: boolean;
+  talking?: boolean;
 }) {
   const nervous = candidate.attributes.mood < 5;
   const src = createAvatar(avataaars, {
@@ -64,7 +67,11 @@ function Portrait({
   }).toDataUri();
   return (
     <img
-      className={"portrait" + (prominent ? " prominent" : "")}
+      className={
+        "portrait" +
+        (prominent ? " prominent" : "") +
+        (talking ? " talking" : "")
+      }
       src={src}
       alt={`Illustrated portrait of ${candidate.name}`}
     />
@@ -139,17 +146,58 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
   const [hired, setHired] = useState("");
   const [mode, setMode] = useState({ mock: true, voice: false });
-  const [recording, setRecording] = useState(false);
-  const recorder = useRef<MediaRecorder | null>(null);
-  const stream = useRef<MediaStream | null>(null);
-  const holding = useRef(false);
+  const [delivering, setDelivering] = useState(false);
+  const deliveryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generation = useRef(0);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const audioVersion = useRef(0);
+  const {
+    speak,
+    stopSpeech: stopAudio,
+    cancelRecording,
+    beginRecord,
+    endRecord,
+    muted,
+    toggleMute,
+    talking,
+    recording,
+    transcribing,
+    notice,
+    micAvailable,
+    micTooltip,
+  } = useInterviewVoice(mode.voice, setCustom);
   const chatEnd = useRef<HTMLDivElement>(null);
   const candidate = candidates[index];
   const turns = candidate ? transcripts[candidate.id] || [] : [];
   const round = turns.length + 1;
+
+  function stopDelivery() {
+    if (deliveryTimer.current) clearTimeout(deliveryTimer.current);
+    deliveryTimer.current = null;
+    setDelivering(false);
+  }
+
+  function deliver(text: string) {
+    stopDelivery();
+    if (!text.trim()) return;
+    setDelivering(true);
+    const duration = Math.min(
+      30000,
+      Math.max(1800, text.trim().split(/\s+/).length * 350),
+    );
+    deliveryTimer.current = setTimeout(() => setDelivering(false), duration);
+  }
+
+  useEffect(
+    () => () => {
+      if (deliveryTimer.current) clearTimeout(deliveryTimer.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    stopAudio();
+    cancelRecording();
+    stopDelivery();
+  }, [screen, candidate?.id]);
 
   useEffect(() => {
     api<Job[]>("presets")
@@ -162,36 +210,6 @@ export default function App() {
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [pending, turns.length]);
-  function stopAudio() {
-    audioVersion.current++;
-    audio.current?.pause();
-    audio.current = null;
-  }
-  async function speak(text: string, voiceId: string) {
-    stopAudio();
-    const version = audioVersion.current;
-    if (!mode.voice) return;
-    try {
-      const response = await fetch("/api/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, voice_id: voiceId }),
-      });
-      if (!response.ok) return;
-      const url = URL.createObjectURL(await response.blob());
-      if (version !== audioVersion.current) {
-        URL.revokeObjectURL(url);
-        return;
-      }
-      const player = new Audio(url);
-      audio.current = player;
-      player.onended = () => URL.revokeObjectURL(url);
-      player.onerror = () => URL.revokeObjectURL(url);
-      await player.play().catch(() => URL.revokeObjectURL(url));
-    } catch {
-      /* Text is always available. */
-    }
-  }
   async function loadCandidates(value: Job) {
     const requestId = ++generation.current;
     setLoadingCandidates(true);
@@ -236,8 +254,8 @@ export default function App() {
   }
   function next() {
     stopAudio();
-    holding.current = false;
-    recorder.current?.state === "recording" && recorder.current.stop();
+    stopDelivery();
+    cancelRecording();
     setEntered(false);
     setQuestions(null);
     setPending("");
@@ -277,6 +295,8 @@ export default function App() {
   async function ask(text: string, kind: string) {
     if (busy || !text.trim() || round > 3 || seconds === 0) return;
     stopAudio();
+    stopDelivery();
+    cancelRecording();
     setBusy(true);
     setError("");
     setPending(text);
@@ -296,7 +316,8 @@ export default function App() {
           { q: text, a: result.answer, kind },
         ],
       }));
-      void speak(result.answer, candidate.voice_id);
+      deliver(result.answer);
+      void speak(result.answer, candidate, index);
     } catch (e) {
       setError((e as Error).message);
       setCustom(text);
@@ -325,63 +346,6 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }
-  async function beginRecord() {
-    if (!mode.voice || busy || recording) return;
-    holding.current = true;
-    try {
-      const media = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (!holding.current) {
-        media.getTracks().forEach((t) => t.stop());
-        return;
-      }
-      stream.current = media;
-      const rec = new MediaRecorder(media);
-      const chunks: BlobPart[] = [];
-      recorder.current = rec;
-      rec.ondataavailable = (e) => chunks.push(e.data);
-      rec.onstop = async () => {
-        setRecording(false);
-        media.getTracks().forEach((t) => t.stop());
-        if (!holding.current && chunks.length) {
-          setBusy(true);
-          try {
-            const form = new FormData();
-            form.append(
-              "audio",
-              new Blob(chunks, { type: rec.mimeType }),
-              "question.webm",
-            );
-            const response = await fetch("/api/stt", {
-              method: "POST",
-              body: form,
-            });
-            if (!response.ok)
-              throw new Error(
-                "Microphone unavailable. Type your question instead.",
-              );
-            setCustom((await response.json()).text);
-          } catch (e) {
-            setMode((m) => ({ ...m, voice: false }));
-            setError((e as Error).message);
-          } finally {
-            setBusy(false);
-          }
-        }
-      };
-      rec.start();
-      setRecording(true);
-    } catch {
-      holding.current = false;
-      setMode((m) => ({ ...m, voice: false }));
-      setError(
-        "Microphone permission unavailable. You can still type your question.",
-      );
-    }
-  }
-  function endRecord() {
-    holding.current = false;
-    if (recorder.current?.state === "recording") recorder.current.stop();
   }
   const steps = ["The role", "The interviews", "The decision", "The reveal"];
   const step =
@@ -687,6 +651,15 @@ export default function App() {
                 <h1>Look beyond the résumé.</h1>
               </div>
               <div className="interview-progress">
+                <button
+                  onClick={toggleMute}
+                  aria-pressed={muted}
+                  aria-label={
+                    muted ? "Unmute candidate speech" : "Mute candidate speech"
+                  }
+                >
+                  <AudioLines size={16} /> {muted ? "Unmute" : "Mute"}
+                </button>
                 <span>
                   Candidate {index + 1}/3 <b>·</b> Round {Math.min(round, 3)}/3
                 </span>
@@ -699,7 +672,11 @@ export default function App() {
             </div>
             <div className="interview-grid">
               <aside className="panel candidate-panel">
-                <Portrait candidate={candidate} prominent />
+                <Portrait
+                  candidate={candidate}
+                  prominent
+                  talking={talking || delivering}
+                />
                 <h2>{candidate.name}</h2>
                 <p className="muted">
                   Candidate 0{index + 1} · {job?.seniority}
@@ -731,7 +708,8 @@ export default function App() {
                         className="primary"
                         onClick={() => {
                           setEntered(true);
-                          void speak(candidate.intro_line, candidate.voice_id);
+                          deliver(candidate.intro_line);
+                          void speak(candidate.intro_line, candidate, index);
                         }}
                       >
                         Bring in {candidate.name.split(" ")[0]}
@@ -823,7 +801,7 @@ export default function App() {
                             ].map((q) => (
                               <button
                                 key={q.kind}
-                                disabled={busy || recording}
+                                disabled={busy || recording || transcribing}
                                 onClick={() => ask(q.text, q.kind)}
                               >
                                 <span>
@@ -857,24 +835,13 @@ export default function App() {
                             value={custom}
                             maxLength={4000}
                             onChange={(e) => setCustom(e.target.value)}
-                            disabled={busy || recording}
+                            disabled={busy || recording || transcribing}
                           />
-                          <span
-                            title={
-                              !mode.voice
-                                ? "Microphone unavailable in text mode. Add an ElevenLabs key to enable voice."
-                                : "Hold to record, release to fill your question"
-                            }
-                          >
+                          <span title={micTooltip}>
                             <button
                               type="button"
                               className={recording ? "recording" : ""}
-                              disabled={
-                                !mode.voice ||
-                                busy ||
-                                !navigator.mediaDevices ||
-                                !window.MediaRecorder
-                              }
+                              disabled={!micAvailable || busy || transcribing}
                               aria-label="Hold to talk"
                               onPointerDown={(e) => {
                                 e.currentTarget.setPointerCapture(e.pointerId);
@@ -897,19 +864,34 @@ export default function App() {
                           </span>
                           <button
                             type="submit"
-                            disabled={busy || recording || !custom.trim()}
+                            disabled={
+                              busy ||
+                              recording ||
+                              transcribing ||
+                              !custom.trim()
+                            }
                             aria-label="Send question"
                           >
                             <Send size={18} />
                           </button>
                         </form>
+                        {notice && (
+                          <p className="small muted" role="status">
+                            {notice}
+                          </p>
+                        )}
                         <div className="dock-footer">
                           <span>
                             {recording
                               ? "Recording… release to transcribe"
-                              : "3 rounds. Make each question count."}
+                              : transcribing
+                                ? "Transcribing…"
+                                : "3 rounds. Make each question count."}
                           </span>
-                          <button disabled={busy || recording} onClick={next}>
+                          <button
+                            disabled={busy || recording || transcribing}
+                            onClick={next}
+                          >
                             Skip candidate
                             <ArrowRight size={13} />
                           </button>

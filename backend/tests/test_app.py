@@ -1,6 +1,8 @@
 import asyncio
+import importlib
 import json
 import os
+import random
 import subprocess
 import sys
 
@@ -10,9 +12,10 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app import llm
+from app.archetypes import ARCHETYPES
 from app.main import app
 from app.mock import PRESETS, best_fit, mock_candidates, mock_evaluation, mock_answer
-from app.models import Answer, AnswerRequest, EvaluateRequest, Resume, Turn
+from app.models import Answer, AnswerRequest, CandidateBatch, EvaluateRequest, Resume, Turn
 
 
 @pytest.fixture(autouse=True)
@@ -72,8 +75,47 @@ def test_provider_success(monkeypatch):
     assert asyncio.run(llm.generate(Answer, "", {}, lambda: {"answer": "safe"})).answer == "live"
 
 
+def test_model_trait_alias_keeps_api_compatible(monkeypatch):
+    candidates = mock_candidates(PRESETS[0])
+    payload = {"candidates": [c.model_dump() for c in candidates]}
+    monkeypatch.setenv("LLM_API_KEY", "test-not-a-real-key")
+    original = httpx.AsyncClient
+
+    def handler(request):
+        messages = json.loads(request.content)["messages"]
+        assert "larping" not in json.dumps(messages).lower()
+        assert "making_stuff_up" in json.dumps(messages)
+        return httpx.Response(200, json={"choices": [{"message": {"content": json.dumps(llm.model_trait_names(payload))}}]})
+
+    monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kwargs: original(transport=httpx.MockTransport(handler)))
+    result = asyncio.run(llm.generate(CandidateBatch, "Use realistic interview language.", payload, lambda: payload))
+    assert result.model_dump() == payload
+    assert "larping" in result.candidates[0].attributes.model_dump()
+    assert llm.model_trait_names({}) == {}
+    assert llm.model_trait_names({"answer": "An ordinary answer"}) == {"answer": "An ordinary answer"}
+
+
+def test_interview_prompts_are_grounded(monkeypatch):
+    main = importlib.import_module("app.main")
+    prompts = []
+
+    async def capture(schema, instruction, data, fallback):
+        prompts.append(instruction)
+        return schema.model_validate(fallback())
+
+    monkeypatch.setattr(main, "generate", capture)
+    client = TestClient(app)
+    job = PRESETS[0].model_dump()
+    candidates = client.post("/api/candidates", json={"job": job}).json()
+    result = client.post("/api/answer", json={"job": job, "candidate": candidates[0], "question": "Tell me about a project."})
+    assert result.status_code == 200
+    assert all("larping" not in p.lower() for p in prompts)
+    assert all("making stuff up / bluffing" in p for p in prompts)
+    assert all("cartoonish exaggeration" in p for p in prompts)
+
+
 def test_best_fit_deterministic_and_role_sensitive():
-    cs = mock_candidates(PRESETS[0])
+    cs = mock_candidates(PRESETS[0], list(ARCHETYPES)[:3])
     smart = next(c for c in cs if c.attributes.smartness == 9)
     warm = next(c for c in cs if c.attributes.mood == 9)
     assert best_fit(PRESETS[0], cs) == smart.id
@@ -87,16 +129,50 @@ def test_candidates_new_and_varied():
     a, b = mock_candidates(PRESETS[0]), mock_candidates(PRESETS[0])
     assert not {c.id for c in a} & {c.id for c in b}
     assert len({c.voice_id for c in a}) == 3
-    assert any(c.attributes.larping >= 8 and c.attributes.smartness <= 4 for c in a)
     assert all(set(c.fabricated_claims).issubset(c.resume.experience) for c in a)
     assert len({c.archetype for c in a}) == 3
     assert all(c.archetype_blurb for c in a)
-    assert next(c for c in a if c.attributes.larping > 7).archetype == "The Smooth Bluffer"
+    assert all(tuple(c.attributes.model_dump().values()) == ARCHETYPES[c.archetype]['profile'] for c in a)
+
+
+def test_candidate_calls_cover_all_eight_archetypes(monkeypatch):
+    rng = random.Random(42)
+    monkeypatch.setattr('app.archetypes.random.sample', rng.sample)
+    client = TestClient(app)
+    seen = set()
+    for _ in range(60):
+        response = client.post('/api/candidates', json={'job': PRESETS[0].model_dump()})
+        assert response.status_code == 200
+        candidates = response.json()
+        names = {c['archetype'] for c in candidates}
+        assert len(names) == 3
+        seen.update(names)
+        for c in candidates:
+            assert tuple(c['attributes'].values()) == ARCHETYPES[c['archetype']]['profile']
+    assert seen == set(ARCHETYPES)
+
+
+def test_model_cannot_override_assigned_archetypes(monkeypatch):
+    assigned = ['The Idiot', 'The Cocky One', 'The Casual One']
+    monkeypatch.setattr('app.main.select_archetypes', lambda: assigned)
+
+    async def wrong_types(schema, instruction, data, fallback):
+        assert [c['archetype'] for c in data['required_candidates']] == assigned
+        assert all(c['answer_style'] for c in data['required_candidates'])
+        return schema(candidates=mock_candidates(PRESETS[0], ['The Prepared One'] * 3))
+
+    monkeypatch.setattr('app.main.generate', wrong_types)
+    result = TestClient(app).post('/api/candidates', json={'job': PRESETS[0].model_dump()}).json()
+    assert [c['archetype'] for c in result] == assigned
+    for c in result:
+        assert c['archetype_blurb'] == ARCHETYPES[c['archetype']]['blurb']
+        assert tuple(c['attributes'].values()) == ARCHETYPES[c['archetype']]['profile']
 
 
 @pytest.mark.parametrize('kind', ['behavioural', 'technical', 'resume', 'followup', 'custom'])
-def test_mock_answers_vary_by_kind_and_round_deterministically(kind):
-    for candidate in mock_candidates(PRESETS[0]):
+@pytest.mark.parametrize('archetype', list(ARCHETYPES))
+def test_mock_answers_vary_by_kind_and_round_deterministically(kind, archetype):
+    for candidate in mock_candidates(PRESETS[0], [archetype]):
         answers = []
         transcript = []
         for round_number in range(3):
@@ -131,6 +207,18 @@ def test_mock_score_rewards_balanced_coverage_and_probing():
     assert mock_evaluation(req).interviewer_score == 70
     req.transcripts = {}
     assert mock_evaluation(req).interviewer_score == 1
+
+
+def test_new_archetype_feedback_is_specific():
+    candidates = mock_candidates(PRESETS[0], ['The Idiot', 'The Cocky One', 'The Casual One'])
+    transcripts = {c.id: [Turn(q='How would you approach the work?', a=mock_answer(AnswerRequest(job=PRESETS[0], candidate=c, question='How would you approach the work?', kind='technical'))['answer'], kind='technical')] for c in candidates}
+    result = mock_evaluation(EvaluateRequest(job=PRESETS[0], candidates=candidates, transcripts=transcripts, hired_id=candidates[0].id))
+    labels = [result.annotations[c.id][0].label for c in candidates]
+    assert labels == ['Missing fundamentals', 'Overconfidence without checking', 'Casual tone, useful substance']
+    assert 'unprofessional' in result.annotations[candidates[2].id][0].why_interviewers_notice
+    assert 'relatable' in result.candidate_summaries[2].summary
+    assert result.interviewer_score <= 70
+    assert len(result.dos) == len(result.donts) == 3
 
 
 @pytest.mark.parametrize("hire_best,expected", [(False, 70), (True, 100)])
@@ -179,11 +267,12 @@ def test_complete_mock_flow():
     for lesson in body['dos'] + body['donts']:
         assert lesson['quote'] in [t['a'] for t in transcripts[lesson['candidate_id']]]
     assert all(len(body['annotations'][c['id']]) == 3 for c in candidates)
-    bluffer = next(c for c in candidates if c['attributes']['larping'] > 7)
-    assert body['annotations'][bluffer['id']][0]['tone'] == 'bad'
-    comparison = next(r for r in body['rating_comparisons'] if r['id'] == bluffer['id'])
-    assert comparison['truth']['honesty'] == 1
-    assert any('Honesty' in flag for flag in comparison['flags'])
+    for c in candidates:
+        if c['attributes']['larping'] > 7:
+            assert body['annotations'][c['id']][0]['tone'] == 'bad'
+            comparison = next(r for r in body['rating_comparisons'] if r['id'] == c['id'])
+            assert comparison['truth']['honesty'] <= 2
+            assert any('Honesty' in flag for flag in comparison['flags'])
     empty = client.post("/api/evaluate", json={**payload, "transcripts": {}})
     assert empty.status_code == 200
     assert empty.json()["best_questions"] == []

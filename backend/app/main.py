@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .llm import generate
+from .archetypes import ARCHETYPES, select_archetypes
 from .mock import PRESETS, VOICES, best_fit, fit_score, mock_answer, mock_candidates, mock_evaluation, mock_job, mock_questions, rating_comparisons
 from .models import Answer, AnswerRequest, CandidateBatch, EvaluateRequest, Evaluation, Job, JobRequest, QuestionRequest, Questions
 
@@ -64,9 +65,14 @@ async def voice_ids():
 @app.post("/api/candidates")
 async def candidates(req: JobRequest):
     job = req.job.model_copy(update={"skills": req.job.skills or ["Problem solving"]})
-    batch = await generate(CandidateBatch, "Assign three distinct archetypes with archetype_blurb consistent with attributes (Prepared One, Nervous Genius, Smooth Bluffer, Rambler, Under-seller). Generate 3 distinct fictional candidates with strongly varied attributes. At least one has larping >=8, smartness <=4, and a spectacular resume. Every fabricated claim must also appear on their resume. Give low-larping candidates 1 inflated claim and high-larping candidates 2 or 3. Make names and histories fresh.", {"job": job.model_dump(), "variation": str(uuid.uuid4())}, lambda: {"candidates": mock_candidates(job)})
-    if len({c.archetype for c in batch.candidates}) != 3 or not any(c.attributes.larping >= 8 and c.attributes.smartness <= 4 for c in batch.candidates):
-        batch = CandidateBatch(candidates=mock_candidates(job))
+    selected = select_archetypes()
+    templates = mock_candidates(job, selected)
+    assignments = [{"archetype": c.archetype, "archetype_blurb": c.archetype_blurb, "attributes": c.attributes.model_dump(), "answer_style": ARCHETYPES[c.archetype]["style"]} for c in templates]
+    batch = await generate(CandidateBatch, "Generate exactly 3 fictional candidates in the order of required_candidates. Use each assigned archetype, blurb and hidden attributes exactly, and make their resumes and intros consistent with the assigned answer_style. The making_stuff_up trait means making stuff up / bluffing when they don't know what they're talking about; its score measures frequency of guessing, not dramatic achievements. Keep every candidate believable for the job's seniority: for interns, use coursework, small projects and part-time work, never enterprise architecture or huge business claims. Even fabricated_claims must be modest overstatements of small tasks and must appear on the resume. Include 1 modestly inflated claim for low making_stuff_up and 2 for high values. Use fresh names and everyday language, no wizard/spell metaphors, theatrical lines or cartoonish exaggeration. Keep the Idiot confused but respectful, the Cocky One confidently mistaken, and the Casual One informal with real substance underneath.", {"job": job.model_dump(), "required_candidates": assignments, "variation": str(uuid.uuid4())}, lambda: {"candidates": templates})
+    for candidate, template in zip(batch.candidates, templates):
+        candidate.archetype = template.archetype
+        candidate.archetype_blurb = template.archetype_blurb
+        candidate.attributes = template.attributes.model_copy()
     voices = await voice_ids()
     for i, c in enumerate(batch.candidates):
         c.id = str(uuid.uuid4())
@@ -81,7 +87,8 @@ async def questions(req: QuestionRequest):
 
 @app.post("/api/answer", response_model=Answer)
 async def answer(req: AnswerRequest):
-    return await generate(Answer, "Exhibit the candidate archetype behaviours, without naming the archetype. You ARE this fictional candidate. Stay consistent with transcript and resume. Reply in 2-5 sentences, in first person. Mood low: curt/nervous with ums. Smartness controls technical depth. Charisma controls polish. High larping: confident bluffing that crumbles under specific follow-ups and resume probes about fabricated claims. Never mention numerical attributes or that this is a game.", req.model_dump(), lambda: mock_answer(req))
+    style = ARCHETYPES.get(req.candidate.archetype, {}).get("style", "Use everyday interview language.")
+    return await generate(Answer, "Answer as this candidate in a realistic job interview, consistent with their resume, seniority and previous answers. Reply directly to the question in 2-5 first-person sentences using everyday spoken language, like a real student discussing a class project or part-time job when appropriate. Keep archetype differences subtle but detectable, without naming the archetype. Low mood: occasional hesitation or a brief pause, not constant ums or panic. Smartness controls practical reasoning; charisma controls clarity and confidence, not extravagant sales pitches. The making_stuff_up trait means making stuff up / bluffing when they don't know what they're talking about: high values sound confident but somewhat vague, give plausible incomplete explanations, and struggle with specifics under probing. Do not instantly confess to inventing everything; acknowledge a limited role or uncertainty naturally when pressed. Keep the scale of every answer appropriate to the job's seniority. For interns, use small assignments, class projects or routine workplace tasks, never heroic architecture or major business turnarounds. Do not invent new achievements beyond the resume. Treat fabricated_claims as inflated, not as facts to recite: describe the smaller underlying task in ordinary terms. Even with a high making_stuff_up score, stick to vague or incomplete explanations of that small task; the score controls frequency of guessing, not the size of achievements. A bluffer might say 'I think we used caching to make it faster, but my teammate set most of that up' rather than claim to architect distributed systems. Prefer plain words over stacks of jargon; a bluffer's lack of knowledge shows in missing detail, not fantastical expertise. No wizard/spell metaphors, theatrical lines, corporate superlatives or cartoonish exaggeration. Never mention numerical attributes or that this is a game. Required answer style (takes priority over generic trait tendencies): " + style, req.model_dump(), lambda: mock_answer(req))
 
 
 @app.post("/api/evaluate", response_model=Evaluation)
