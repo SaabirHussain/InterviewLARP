@@ -95,6 +95,25 @@ def test_model_trait_alias_keeps_api_compatible(monkeypatch):
     assert llm.model_trait_names({"answer": "An ordinary answer"}) == {"answer": "An ordinary answer"}
 
 
+@pytest.mark.parametrize('text', ['larping', 'Larping', 'making_stuff_up', 'Making Stuff Up'])
+def test_trait_alias_preserves_interview_text(monkeypatch, text):
+    monkeypatch.setenv('LLM_API_KEY', 'test-not-a-real-key')
+    data = {'job': {'title': text, 'skills': [text]}, 'transcripts': {'larping': [{'a': text}]}, 'candidate': {'attributes': {'larping': 8}}}
+    original = httpx.AsyncClient
+
+    def handler(request):
+        messages = json.loads(request.content)['messages']
+        sent = json.loads(messages[1]['content'])
+        assert sent['job'] == data['job']
+        assert sent['transcripts'] == data['transcripts']
+        assert sent['candidate']['attributes'] == {'making_stuff_up': 8}
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({'answer': text})}}]})
+
+    monkeypatch.setattr(llm.httpx, 'AsyncClient', lambda **kwargs: original(transport=httpx.MockTransport(handler)))
+    result = asyncio.run(llm.generate(Answer, '', data, lambda: {'answer': 'fallback'}))
+    assert result.answer == text
+
+
 def test_interview_prompts_are_grounded(monkeypatch):
     main = importlib.import_module("app.main")
     prompts = []
@@ -167,6 +186,49 @@ def test_model_cannot_override_assigned_archetypes(monkeypatch):
     for c in result:
         assert c['archetype_blurb'] == ARCHETYPES[c['archetype']]['blurb']
         assert tuple(c['attributes'].values()) == ARCHETYPES[c['archetype']]['profile']
+
+
+@pytest.mark.parametrize('mode', ['reordered', 'missing', 'duplicated', 'invalid_claim'])
+def test_generated_candidates_keep_matching_evidence(monkeypatch, mode):
+    assigned = ['The Idiot', 'The Cocky One', 'The Casual One']
+    monkeypatch.setattr('app.main.select_archetypes', lambda: assigned)
+    generated = mock_candidates(PRESETS[0], assigned)
+    for index, candidate in enumerate(generated):
+        candidate.name = f'Generated {index}'
+        candidate.intro_line = f'Intro for {assigned[index]}'
+        candidate.attributes.larping = 1
+    fallback_indices = set()
+    if mode == 'missing':
+        generated[1].archetype = 'The Under-seller'
+        fallback_indices = {1}
+    elif mode == 'duplicated':
+        generated[2].archetype = assigned[0]
+        fallback_indices = {0, 2}
+    elif mode == 'invalid_claim':
+        generated[0].fabricated_claims = ['A claim that is absent from this resume']
+        fallback_indices = {0}
+
+    async def reordered(schema, instruction, data, fallback):
+        return schema(candidates=[generated[2], generated[0], generated[1]])
+
+    monkeypatch.setattr('app.main.generate', reordered)
+    response = TestClient(app).post('/api/candidates', json={'job': PRESETS[0].model_dump()})
+    assert response.status_code == 200
+    result = response.json()
+    assert [candidate['archetype'] for candidate in result] == assigned
+    assert len({candidate['id'] for candidate in result}) == 3
+    for index, candidate in enumerate(result):
+        assert tuple(candidate['attributes'].values()) == ARCHETYPES[assigned[index]]['profile']
+        assert candidate['archetype_blurb'] == ARCHETYPES[assigned[index]]['blurb']
+        if index in fallback_indices:
+            assert not candidate['name'].startswith('Generated')
+        else:
+            assert candidate['name'] == f'Generated {index}'
+            assert candidate['intro_line'] == f'Intro for {assigned[index]}'
+            assert candidate['resume'] == generated[index].resume.model_dump()
+            assert candidate['fabricated_claims'] == generated[index].fabricated_claims
+        resume_text = '\n'.join([candidate['resume']['education'], *candidate['resume']['experience'], *candidate['resume']['skills'], *candidate['resume']['projects']])
+        assert all(claim in resume_text for claim in candidate['fabricated_claims'])
 
 
 @pytest.mark.parametrize('kind', ['behavioural', 'technical', 'resume', 'followup', 'custom'])
