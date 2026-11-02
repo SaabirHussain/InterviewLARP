@@ -68,13 +68,16 @@ async def candidates(req: JobRequest):
     selected = select_archetypes()
     templates = mock_candidates(job, selected)
     assignments = [{"archetype": c.archetype, "archetype_blurb": c.archetype_blurb, "attributes": c.attributes.model_dump(), "answer_style": ARCHETYPES[c.archetype]["style"]} for c in templates]
-    batch = await generate(CandidateBatch, "Generate exactly 3 fictional candidates in the order of required_candidates. Use each assigned archetype, blurb and hidden attributes exactly, and make their resumes and intros consistent with the assigned answer_style. The making_stuff_up trait means making stuff up / bluffing when they don't know what they're talking about; its score measures frequency of guessing, not dramatic achievements. Keep every candidate believable for the job's seniority: for interns, use coursework, small projects and part-time work, never enterprise architecture or huge business claims. Even fabricated_claims must be modest overstatements of small tasks and must appear on the resume. Include 1 modestly inflated claim for low making_stuff_up and 2 for high values. Use fresh names and everyday language, no wizard/spell metaphors, theatrical lines or cartoonish exaggeration. Keep the Idiot confused but respectful, the Cocky One confidently mistaken, and the Casual One informal with real substance underneath.", {"job": job.model_dump(), "required_candidates": assignments, "variation": str(uuid.uuid4())}, lambda: {"candidates": templates})
+    batch = await generate(CandidateBatch, "Generate exactly 3 fictional candidates in the order of required_candidates. Use each assigned archetype, blurb and hidden attributes exactly, and make their resumes and intros consistent with the assigned answer_style. The making_stuff_up trait means making stuff up / bluffing when they don't know what they're talking about; its score measures frequency of guessing, not dramatic achievements. Keep every candidate believable for the job's seniority: for interns, use coursework, small projects and part-time work, never enterprise architecture or huge business claims. Even fabricated_claims must be modest overstatements of small tasks. For every fabricated_claims entry, copy that exact complete string verbatim into resume.experience or resume.projects. The resume is what the candidate claims to have done, so include the inflated claim there, not just the smaller underlying task. Never list a fabricated claim that is absent from the resume. Include 1 modestly inflated claim for low making_stuff_up and 2 for high values. Use fresh names and everyday language, no wizard/spell metaphors, theatrical lines or cartoonish exaggeration. Keep the Idiot confused but respectful, the Cocky One confidently mistaken, and the Casual One informal with real substance underneath.", {"job": job.model_dump(), "required_candidates": assignments, "variation": str(uuid.uuid4())}, lambda: {"candidates": templates})
     matched = []
     for template in templates:
         matches = [c for c in batch.candidates if c.archetype == template.archetype]
         candidate = matches[0] if len(matches) == 1 else template
         resume_text = "\n".join([candidate.resume.education, *candidate.resume.experience, *candidate.resume.skills, *candidate.resume.projects]).casefold()
-        if not all(claim.strip() and claim.casefold() in resume_text for claim in candidate.fabricated_claims):
+        claims = [claim for claim in candidate.fabricated_claims if claim.strip() and claim.casefold() in resume_text]
+        if claims:
+            candidate.fabricated_claims = claims
+        else:
             candidate = template
         candidate.archetype = template.archetype
         candidate.archetype_blurb = template.archetype_blurb

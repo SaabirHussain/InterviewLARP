@@ -188,7 +188,7 @@ def test_model_cannot_override_assigned_archetypes(monkeypatch):
         assert tuple(c['attributes'].values()) == ARCHETYPES[c['archetype']]['profile']
 
 
-@pytest.mark.parametrize('mode', ['reordered', 'missing', 'duplicated', 'invalid_claim'])
+@pytest.mark.parametrize('mode', ['reordered', 'missing', 'duplicated', 'invalid_claim', 'partial_claims'])
 def test_generated_candidates_keep_matching_evidence(monkeypatch, mode):
     assigned = ['The Idiot', 'The Cocky One', 'The Casual One']
     monkeypatch.setattr('app.main.select_archetypes', lambda: assigned)
@@ -207,6 +207,8 @@ def test_generated_candidates_keep_matching_evidence(monkeypatch, mode):
     elif mode == 'invalid_claim':
         generated[0].fabricated_claims = ['A claim that is absent from this resume']
         fallback_indices = {0}
+    elif mode == 'partial_claims':
+        generated[0].fabricated_claims.append('A claim that is absent from this resume')
 
     async def reordered(schema, instruction, data, fallback):
         return schema(candidates=[generated[2], generated[0], generated[1]])
